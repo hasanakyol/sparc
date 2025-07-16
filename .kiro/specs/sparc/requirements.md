@@ -2,7 +2,9 @@
 
 ## Introduction
 
-This document outlines the requirements for a unified physical access control system and video surveillance platform. The system will provide API-first architecture to secure buildings through integrated access management and real-time video monitoring capabilities. The platform will serve as a comprehensive security solution that combines traditional access control with modern surveillance technology in a single, cohesive application. Our platform is called SPARC.
+This document outlines the requirements for SPARC, a unified physical access control system and video surveillance platform. The system will provide API-first architecture to secure buildings through integrated access management and real-time video monitoring capabilities. The platform serves as a comprehensive security solution that combines traditional access control with modern surveillance technology in a single, cohesive application.
+
+SPARC addresses the growing need for integrated security solutions that can scale from single buildings to enterprise-wide deployments while maintaining the flexibility to serve multiple tenants through a unified platform.
 
 ### System Architecture Vision
 
