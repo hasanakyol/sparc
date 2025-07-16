@@ -121,6 +121,10 @@ All requirements will be implemented in a single comprehensive release to delive
 13. WHEN system loads are high THEN the system SHALL provide loading indicators, progress bars, and graceful degradation of non-critical features
 14. WHEN errors occur THEN the system SHALL provide clear error messages, suggested solutions, and easy access to support resources
 15. IF browser compatibility issues arise THEN the system SHALL support all modern browsers (Chrome, Firefox, Safari, Edge) released within the last 2 years with consistent functionality
+16. WHEN an SSP technician accesses the system THEN the interface SHALL provide client-switching capabilities with <2 second context switch
+17. WHEN an enterprise user accesses the system THEN the interface SHALL focus on their single organization without SSP overhead
+18. WHEN in hybrid mode THEN the interface SHALL clearly indicate current operational responsibility
+19. IF a user has permissions across multiple deployment models THEN the system SHALL provide appropriate interface switching
 
 ### Requirement 8: Video Management
 
@@ -240,7 +244,6 @@ All requirements will be implemented in a single comprehensive release to delive
 
 ### Requirement 15: Multi-Tenant Architecture
 
-
 **User Story:** As a service provider, I want to host multiple independent organizations on the same platform, so that I can provide cost-effective security services to multiple clients.
 
 #### Acceptance Criteria
@@ -251,6 +254,10 @@ All requirements will be implemented in a single comprehensive release to delive
 4. IF one tenant experiences issues THEN the system SHALL isolate problems to prevent impact on other tenants
 5. WHEN billing tenants THEN the system SHALL track usage metrics per tenant for accurate cost allocation
 6. WHEN customizing interfaces THEN the system SHALL support tenant-specific branding and configuration
+7. WHEN deployed for an SSP THEN the system SHALL support hierarchical tenant structure: SSP > Client Organization > Sites
+8. WHEN deployed for direct enterprise THEN the system SHALL support structure: Organization > Sites > Buildings
+9. WHEN in hybrid deployment THEN the system SHALL support concurrent access with role-based permissions for both enterprise users and SSP operators
+10. IF ownership transfers between models THEN the system SHALL maintain all configurations and historical data
 
 **Related Requirements:** 16 (Multi-Building), 17 (Multi-Site)
 
@@ -454,9 +461,23 @@ All requirements will be implemented in a single comprehensive release to delive
 
 **Related Requirements:** 2 (Physical Access), 3 (Video Surveillance), 17 (Multi-Site), 19 (Backup and Recovery)
 
+### Requirement 28: Flexible Deployment Models
+
+**User Story:** As a system administrator, I want to deploy SPARC in different operational models (SSP-managed, self-managed, or hybrid), so that organizations can choose the management approach that best fits their needs.
+
+#### Acceptance Criteria
+
+1. WHEN configuring deployment THEN the system SHALL support SSP-managed, self-managed, and hybrid models
+2. WHEN in hybrid mode THEN the system SHALL support time-based responsibility handoffs with clear operational boundaries
+3. WHEN transitioning between models THEN the system SHALL maintain all data, configurations, and user accounts
+4. IF multiple organizations are managed by one SSP THEN the system SHALL maintain complete isolation between client organizations
+5. WHEN permissions are configured THEN the system SHALL support granular access control for monitoring, response, and administration functions
+
+**Related Requirements:** 1 (Authentication), 15 (Multi-Tenant), 17 (Multi-Site)
+
 ## Requirements Summary
 
-This specification defines 27 comprehensive requirements for a unified access control and video surveillance platform, all to be implemented in a single release:
+This specification defines 28 comprehensive requirements for a unified access control and video surveillance platform, all to be implemented in a single release:
 
 **Core Functionality**:
 - User authentication and authorization
@@ -477,6 +498,7 @@ This specification defines 27 comprehensive requirements for a unified access co
 - Video privacy compliance
 - Visitor management
 - Offline resilience
+- Flexible deployment models
 
 **Advanced Features**:
 - Video management

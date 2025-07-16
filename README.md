@@ -1,16 +1,17 @@
 # SPARC - Unified Access Control and Video Surveillance Platform
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/your-org/sparc)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/your-org/sparc/releases)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/hasanakyol/sparc)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/hasanakyol/sparc/releases)
 
-SPARC (Unified Access Control and Video Surveillance Platform) is a modern, API-first security management system that combines physical access control with video surveillance in a single, cohesive application. Built with multi-tenant architecture, SPARC serves as a comprehensive security solution that scales from single buildings to enterprise-wide deployments.
+SPARC (Unified Access Control and Video Surveillance Platform) is a modern, API-first security management system that combines physical access control with video surveillance in a single, cohesive application. Built with flexible multi-tenant architecture, SPARC serves as a comprehensive security solution that supports both Security Service Providers (SSPs) managing multiple enterprise clients and direct enterprise deployments, scaling from single buildings to enterprise-wide deployments.
 
 ## 🎯 What is SPARC?
 
 SPARC addresses the growing need for integrated security solutions by unifying traditional access control with modern surveillance technology. The platform provides:
 
 - **Unified Security Management**: Single platform for access control and video surveillance
+- **Flexible Deployment Models**: Support for SSP-managed, self-managed, and hybrid operational models
 - **Multi-Tenant Architecture**: Complete data isolation for service providers hosting multiple organizations
 - **Enterprise-Scale**: Support for complex multi-site, multi-building deployments
 - **Offline Resilience**: 72-hour operation capability without network connectivity
@@ -45,6 +46,7 @@ graph TB
         MOBILE_SVC[Mobile Credential Service]
         ENV_SVC[Environmental Monitoring Service]
         VISITOR_SVC[Visitor Management Service]
+        DEPLOYMENT_SVC[Deployment Model Service]
     end
     
     subgraph "Data Layer"
@@ -74,6 +76,7 @@ graph TB
     GATEWAY --> DEVICE_SVC
     GATEWAY --> ALERT_SVC
     GATEWAY --> REPORT_SVC
+    GATEWAY --> DEPLOYMENT_SVC
     
     ACCESS_SVC --> POSTGRES
     ACCESS_SVC --> REDIS
@@ -112,10 +115,12 @@ graph TB
 - **Privacy Compliance**: Masking, retention policies, audit trails
 
 ### 🏢 Multi-Tenant & Enterprise
+- **Flexible Deployment Models**: SSP-managed, self-managed, and hybrid operational approaches
 - **Complete Tenant Isolation**: Secure data separation for service providers
 - **Hierarchical Organization**: Tenant > Organization > Site > Building > Floor > Zone > Door
 - **Cross-Site Management**: Enterprise-wide policies with site-specific overrides
 - **Resource Management**: Per-tenant quotas and usage tracking
+- **Operational Handoffs**: Time-based responsibility management for hybrid deployments
 
 ### 🔧 Hardware Integration
 - **Modern Protocols**: OSDP v2.2, ONVIF Profile S/T/G, TCP/IP, REST APIs
@@ -159,18 +164,22 @@ graph TB
 
 ## 👥 User Personas & Use Cases
 
-### 🏢 Service Provider
+### 🏢 Service Provider (SSP)
 **Who**: Security service companies hosting multiple client organizations
 **Needs**: 
 - Complete tenant isolation and data security
 - Usage tracking and billing capabilities
 - Scalable infrastructure for multiple clients
 - Centralized management with tenant-specific branding
+- Client context switching with <2 second performance
+- Cross-client operations and health monitoring
 
 **Use Cases**:
 - Onboard new client organizations with isolated environments
 - Monitor usage across all tenants for accurate billing
 - Provide white-label security services with custom branding
+- Manage 100+ client organizations with efficient switching
+- Generate cross-client analytics and health reports
 
 ### 🏭 Enterprise Security Manager
 **Who**: Large organizations with multiple sites and complex security requirements
@@ -179,12 +188,16 @@ graph TB
 - Consistent security policies with site-specific flexibility
 - Comprehensive reporting and compliance capabilities
 - Integration with existing enterprise systems
+- Self-managed deployment without SSP overhead
+- Focused interface for single organization operations
 
 **Use Cases**:
 - Manage security across 50+ office locations globally
 - Implement company-wide access policies with local exceptions
 - Generate compliance reports for regulatory audits
 - Integrate with HR systems for automated employee access management
+- Deploy self-managed solution with full control
+- Transition between deployment models as needed
 
 ### 🏢 Facilities Security Administrator
 **Who**: Day-to-day security operations managers for individual buildings or campuses
@@ -193,12 +206,16 @@ graph TB
 - Easy-to-use interface for daily operations
 - Quick incident response capabilities
 - Visitor management and temporary access control
+- Clear operational responsibility indicators in hybrid mode
+- Deployment model awareness for appropriate interface
 
 **Use Cases**:
 - Monitor live camera feeds and respond to security alerts
 - Manage visitor check-ins and temporary access credentials
 - Generate incident reports with correlated video evidence
 - Configure access schedules and holiday exceptions
+- Operate in hybrid deployments with clear handoff boundaries
+- Switch between deployment models as operational needs change
 
 ### 👮 Security Operator
 **Who**: Front-line security personnel monitoring systems 24/7
@@ -221,16 +238,20 @@ graph TB
 - Automated maintenance scheduling
 - Performance monitoring and optimization
 - Integration with existing IT infrastructure
+- Deployment model configuration and transitions
+- Permission management across different operational models
 
 **Use Cases**:
 - Configure and maintain access control panels and cameras
 - Monitor system performance and resource utilization
 - Schedule firmware updates and preventive maintenance
 - Integrate with LDAP/Active Directory for user management
+- Configure SSP-managed, self-managed, or hybrid deployments
+- Manage transitions between deployment models without disruption
 
 ## 🏗️ Multi-Tenant Architecture
 
-SPARC's multi-tenant architecture provides complete isolation between organizations while enabling efficient resource sharing:
+SPARC's flexible multi-tenant architecture provides complete isolation between organizations while enabling efficient resource sharing and supporting multiple deployment models:
 
 ```mermaid
 graph TB
@@ -288,6 +309,13 @@ graph TB
 - **Storage Level**: Tenant-specific object storage buckets
 - **Resource Level**: Per-tenant quotas and usage tracking
 - **Branding Level**: Tenant-specific UI customization
+
+### Deployment Model Support
+- **SSP-Managed**: Multi-client organization management with complete isolation
+- **Self-Managed**: Direct enterprise control without SSP layer overhead
+- **Hybrid**: Shared access with time-based responsibility handoffs
+- **Model Transitions**: Seamless switching between deployment approaches
+- **Context Switching**: <2 second performance for SSP client switching
 
 ## 🔄 User Flows
 
@@ -380,6 +408,8 @@ sequenceDiagram
 - **Offline Operation**: 72-hour continuous operation
 - **Failover**: 30-second automatic system failover
 - **Mesh Networking**: 15-minute credential revocation propagation
+- **Context Switching**: <2 seconds for SSP client switching
+- **Deployment Models**: Support for 100+ SSP clients and 50+ enterprise sites
 
 ## 🔒 Security & Compliance
 
@@ -412,7 +442,7 @@ sequenceDiagram
 ### Quick Start
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/sparc.git
+git clone https://github.com/hasanakyol/sparc.git
 cd sparc
 
 # Install dependencies
@@ -475,17 +505,18 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Documentation**: [docs.sparc-platform.com](https://docs.sparc-platform.com)
 - **Community Forum**: [community.sparc-platform.com](https://community.sparc-platform.com)
-- **Issue Tracker**: [GitHub Issues](https://github.com/your-org/sparc/issues)
+- **Issue Tracker**: [GitHub Issues](https://github.com/hasanakyol/sparc/issues)
 - **Enterprise Support**: [support@sparc-platform.com](mailto:support@sparc-platform.com)
 
 ## 🗺️ Roadmap
 
-### Current Release (v1.0)
+### Initial Release (v1.0)
 - ✅ Complete access control and video surveillance platform
-- ✅ Multi-tenant architecture with full isolation
+- ✅ Flexible multi-tenant architecture with deployment model support
 - ✅ Mobile credential support (NFC/BLE)
 - ✅ Advanced analytics and reporting
 - ✅ Comprehensive hardware integration
+- ✅ SSP-managed, self-managed, and hybrid deployment models
 
 ### Future Releases
 - 🔄 AI-powered behavioral analytics

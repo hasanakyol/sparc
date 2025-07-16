@@ -138,7 +138,7 @@ graph TB
 
 ### Multi-Tenant Architecture
 
-The system implements comprehensive tenant isolation at multiple levels to support service providers hosting multiple organizations:
+The system implements comprehensive tenant isolation at multiple levels to support both Security Service Providers (SSPs) managing multiple enterprise clients and direct enterprise deployments. The architecture supports flexible deployment models including SSP-managed, self-managed, and hybrid approaches with seamless transitions between models.
 
 1. **Database Level**: Tenant-specific schemas with row-level security and complete data isolation
 2. **Application Level**: Tenant context in all service calls with automatic injection
@@ -152,7 +152,40 @@ The system implements comprehensive tenant isolation at multiple levels to suppo
 10. **Usage Tracking**: Comprehensive metrics collection for accurate tenant billing and resource allocation
 11. **Isolation Verification**: Automated testing to ensure no cross-tenant data access is possible
 
-**Design Rationale**: Multi-tenant architecture enables cost-effective SaaS delivery while ensuring complete security isolation between organizations. The hierarchical structure supports complex enterprise deployments while maintaining tenant boundaries. This approach allows service providers to scale efficiently while supporting both single-site and multi-site enterprise customers. The enhanced isolation verification and usage tracking address the stringent requirements for service provider deployments.
+#### Deployment Model Flexibility
+
+The platform supports three deployment models using the same core architecture:
+
+1. **SSP-Managed Deployment**
+   - SSP tenant contains multiple client organizations
+   - Complete isolation between clients
+   - SSP-level dashboards and cross-client operations
+   - Client-specific branding and configurations
+
+2. **Self-Managed Deployment**
+   - Direct organization tenant with full control
+   - No SSP layer overhead
+   - Enterprise-focused workflows
+
+3. **Hybrid Deployment**
+   - Shared access between enterprise and SSP
+   - Time-based or function-based responsibility
+   - Clear operational handoffs
+   - Audit trail for all actions by both parties
+
+**Hierarchical Structure Adaptation:**
+```
+SSP Deployment:
+Tenant (SSP) > Client Organization > Site > Building > Floor > Zone > Door
+
+Enterprise Deployment:
+Tenant (Organization) > Site > Building > Floor > Zone > Door
+
+Hybrid Deployment:
+Tenant (Organization) with SSP Access Rights > Site > Building > Floor > Zone > Door
+```
+
+**Design Rationale**: Multi-tenant architecture enables cost-effective SaaS delivery while ensuring complete security isolation between organizations. The hierarchical structure supports complex enterprise deployments while maintaining tenant boundaries. This approach allows service providers to scale efficiently while supporting both single-site and multi-site enterprise customers. The enhanced isolation verification and usage tracking address the stringent requirements for service provider deployments. The flexible deployment models ensure organizations can choose the management approach that best fits their operational needs.
 
 ### Microservices Design
 
@@ -222,6 +255,10 @@ Each service is independently deployable and scalable with clear requirement map
 - JWT token generation and validation with tenant context
 - Integration with LDAP/Active Directory for user synchronization
 - Session management and revocation for disabled accounts
+- Multi-model permission system supporting SSP technicians, enterprise users, and hybrid access
+- Context-aware authentication adapting interface based on user type
+- Permission inheritance with override capabilities for hybrid deployments
+- Time-based permission activation for shift-based responsibilities
 
 **Technology**: Hono with JWT middleware and LDAP/Active Directory integration
 
@@ -483,6 +520,20 @@ Each service is independently deployable and scalable with clear requirement map
 **Technology**: Hono with Swagger/OpenAPI middleware and automated documentation generation
 
 **Requirements Coverage**: Requirements 5 (API-First Architecture), 18 (Integration and Interoperability)
+
+### Deployment Model Service
+
+**Purpose**: Manages deployment configurations and operational model transitions.
+
+**Key Components**:
+- **Model Configuration**: Defines deployment type and operational parameters
+- **Permission Adapter**: Translates permissions based on deployment model
+- **Transition Manager**: Handles model changes without service disruption
+- **Responsibility Engine**: Manages handoffs in hybrid deployments
+
+**Technology**: Hono microservice with PostgreSQL configuration storage
+
+**Requirements Coverage**: Requirement 28 (Flexible Deployment Models)
 
 ### Testing Infrastructure Service
 
