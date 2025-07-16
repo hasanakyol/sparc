@@ -39,13 +39,20 @@ graph TB
         EVENT_SVC[Event Processing Service]
         ANALYTICS_SVC[Analytics Service]
         TENANT_SVC[Tenant Management Service]
+        AUTH_SVC[Authentication Service]
         DEVICE_SVC[Device Management Service]
+        MOBILE_SVC[Mobile Credential Service]
+        ENV_SVC[Environmental Monitoring Service]
         ALERT_SVC[Alert Service]
         REPORT_SVC[Reporting Service]
         INTEGRATION_SVC[Integration Service]
-        MOBILE_SVC[Mobile Credential Service]
-        ENV_SVC[Environmental Monitoring Service]
         VISITOR_SVC[Visitor Management Service]
+        ELEVATOR_SVC[Elevator Control Service]
+        BACKUP_SVC[Backup & Recovery Service]
+        SECURITY_SVC[Security & Compliance Service]
+        MAINTENANCE_SVC[Maintenance Service]
+        API_DOC_SVC[API Documentation Service]
+        TEST_SVC[Testing Infrastructure Service]
         DEPLOYMENT_SVC[Deployment Model Service]
     end
     
@@ -73,9 +80,20 @@ graph TB
     GATEWAY --> EVENT_SVC
     GATEWAY --> ANALYTICS_SVC
     GATEWAY --> TENANT_SVC
+    GATEWAY --> AUTH_SVC
     GATEWAY --> DEVICE_SVC
+    GATEWAY --> MOBILE_SVC
+    GATEWAY --> ENV_SVC
     GATEWAY --> ALERT_SVC
     GATEWAY --> REPORT_SVC
+    GATEWAY --> INTEGRATION_SVC
+    GATEWAY --> VISITOR_SVC
+    GATEWAY --> ELEVATOR_SVC
+    GATEWAY --> BACKUP_SVC
+    GATEWAY --> SECURITY_SVC
+    GATEWAY --> MAINTENANCE_SVC
+    GATEWAY --> API_DOC_SVC
+    GATEWAY --> TEST_SVC
     GATEWAY --> DEPLOYMENT_SVC
     
     ACCESS_SVC --> POSTGRES
@@ -86,16 +104,37 @@ graph TB
     EVENT_SVC --> REDIS
     ANALYTICS_SVC --> POSTGRES
     TENANT_SVC --> POSTGRES
+    AUTH_SVC --> POSTGRES
+    AUTH_SVC --> REDIS
     DEVICE_SVC --> POSTGRES
     DEVICE_SVC --> REDIS
+    MOBILE_SVC --> POSTGRES
+    MOBILE_SVC --> REDIS
+    ENV_SVC --> POSTGRES
+    ENV_SVC --> REDIS
+    ALERT_SVC --> POSTGRES
     ALERT_SVC --> REDIS
     REPORT_SVC --> POSTGRES
+    INTEGRATION_SVC --> POSTGRES
+    VISITOR_SVC --> POSTGRES
+    ELEVATOR_SVC --> POSTGRES
+    ELEVATOR_SVC --> REDIS
+    BACKUP_SVC --> POSTGRES
+    BACKUP_SVC --> OBJECT_STORE
+    SECURITY_SVC --> POSTGRES
+    MAINTENANCE_SVC --> POSTGRES
+    API_DOC_SVC --> POSTGRES
+    TEST_SVC --> POSTGRES
+    DEPLOYMENT_SVC --> POSTGRES
     
     ACCESS_SVC --> PANELS
     ACCESS_SVC --> READERS
     VIDEO_SVC --> CAMERAS
     DEVICE_SVC --> ENV_SENSORS
-    INTEGRATION_SVC --> ELEVATORS
+    MOBILE_SVC --> READERS
+    ENV_SVC --> ENV_SENSORS
+    VISITOR_SVC --> READERS
+    ELEVATOR_SVC --> ELEVATORS
 ```
 
 ## 🚀 Key Features
@@ -113,11 +152,14 @@ graph TB
 - **Multi-Camera Views**: Up to 64 simultaneous camera feeds
 - **Video Analytics**: Motion detection, line crossing, camera tampering
 - **Privacy Compliance**: Masking, retention policies, audit trails
+- **Hierarchical Management**: Cameras organized by Tenant > Organization > Site > Building > Floor > Zone
 
 ### 🏢 Multi-Tenant & Enterprise
 - **Flexible Deployment Models**: SSP-managed, self-managed, and hybrid operational approaches
 - **Complete Tenant Isolation**: Secure data separation for service providers
-- **Hierarchical Organization**: Tenant > Organization > Site > Building > Floor > Zone > Door
+- **Hierarchical Organization**: 
+  - Doors: Tenant > Organization > Site > Building > Floor > Zone > Door
+  - Cameras: Tenant > Organization > Site > Building > Floor > Zone > Camera
 - **Cross-Site Management**: Enterprise-wide policies with site-specific overrides
 - **Resource Management**: Per-tenant quotas and usage tracking
 - **Operational Handoffs**: Time-based responsibility management for hybrid deployments
@@ -263,7 +305,10 @@ graph TB
         TA_BUILD2[Building 2]
         TA_FLOOR1[Floor 1]
         TA_FLOOR2[Floor 2]
-        TA_DOORS[Doors & Cameras]
+        TA_ZONE1[Zone 1]
+        TA_ZONE2[Zone 2]
+        TA_DOORS[Doors]
+        TA_CAMERAS[Cameras]
     end
     
     subgraph "Tenant B"
@@ -271,7 +316,9 @@ graph TB
         TB_SITE1[Site 1]
         TB_BUILD1[Building 1]
         TB_FLOOR1[Floor 1]
-        TB_DOORS[Doors & Cameras]
+        TB_ZONE1[Zone 1]
+        TB_DOORS[Doors]
+        TB_CAMERAS[Cameras]
     end
     
     subgraph "Shared Infrastructure"
@@ -286,21 +333,58 @@ graph TB
     TA_SITE2 --> TA_BUILD2
     TA_BUILD1 --> TA_FLOOR1
     TA_BUILD2 --> TA_FLOOR2
-    TA_FLOOR1 --> TA_DOORS
-    TA_FLOOR2 --> TA_DOORS
+    TA_FLOOR1 --> TA_ZONE1
+    TA_FLOOR2 --> TA_ZONE2
+    TA_ZONE1 --> TA_DOORS
+    TA_ZONE1 --> TA_CAMERAS
+    TA_ZONE2 --> TA_DOORS
+    TA_ZONE2 --> TA_CAMERAS
     
     TB_ORG --> TB_SITE1
     TB_SITE1 --> TB_BUILD1
     TB_BUILD1 --> TB_FLOOR1
-    TB_FLOOR1 --> TB_DOORS
+    TB_FLOOR1 --> TB_ZONE1
+    TB_ZONE1 --> TB_DOORS
+    TB_ZONE1 --> TB_CAMERAS
     
     TA_ORG -.-> SHARED_DB
     TB_ORG -.-> SHARED_DB
     TA_DOORS -.-> SHARED_STORAGE
+    TA_CAMERAS -.-> SHARED_STORAGE
     TB_DOORS -.-> SHARED_STORAGE
+    TB_CAMERAS -.-> SHARED_STORAGE
     SHARED_SERVICES --> SHARED_DB
     SHARED_SERVICES --> SHARED_STORAGE
 ```
+
+### Hierarchical Resource Management
+
+#### Door Hierarchy
+The door access control system follows a strict hierarchical structure:
+**Tenant > Organization > Site > Building > Floor > Zone > Door**
+
+Each door is assigned to a specific zone, allowing for:
+- Zone-based access policies
+- Emergency lockdown by zone
+- Zone-specific schedules and permissions
+- Grouped reporting and analytics
+
+#### Camera Hierarchy
+The camera surveillance system follows the same hierarchical structure:
+**Tenant > Organization > Site > Building > Floor > Zone > Camera**
+
+Each camera includes:
+- `zone_id`: Assignment to a specific zone for logical grouping
+- Zone-based video retention policies
+- Zone-specific privacy settings
+- Coordinated alerts with door access events in the same zone
+- Grouped camera views by zone
+
+This unified hierarchy ensures:
+- Consistent management across access control and video surveillance
+- Simplified permission inheritance
+- Efficient resource organization
+- Scalable policy application
 
 ### Tenant Isolation Features
 - **Database Level**: Tenant-specific schemas with row-level security
@@ -373,6 +457,95 @@ sequenceDiagram
     SPARC->>Kiosk: Print Badge & Temp Credential
     SPARC->>Host: Notify of Arrival
     SPARC->>Security: Alert if Overstay
+```
+
+## 📊 Data Models
+
+### Camera Data Model
+The camera entity follows the hierarchical structure and includes:
+
+```typescript
+interface Camera {
+  id: string;
+  tenant_id: string;
+  organization_id: string;
+  site_id: string;
+  building_id: string;
+  floor_id: string;
+  zone_id: string;  // Critical for zone-based management
+  name: string;
+  ip_address: string;
+  mac_address: string;
+  model: string;
+  manufacturer: string;
+  stream_urls: {
+    primary: string;
+    secondary?: string;
+  };
+  capabilities: {
+    ptz: boolean;
+    audio: boolean;
+    analytics: string[];
+  };
+  status: 'online' | 'offline' | 'recording' | 'error';
+  settings: {
+    retention_days: number;
+    motion_detection: boolean;
+    privacy_zones: Array<{x: number, y: number, width: number, height: number}>;
+  };
+  created_at: Date;
+  updated_at: Date;
+}
+```
+
+### Door Data Model
+The door entity maintains the same hierarchical structure:
+
+```typescript
+interface Door {
+  id: string;
+  tenant_id: string;
+  organization_id: string;
+  site_id: string;
+  building_id: string;
+  floor_id: string;
+  zone_id: string;  // Zone assignment for grouped management
+  name: string;
+  panel_id: string;
+  reader_in_id?: string;
+  reader_out_id?: string;
+  lock_type: 'strike' | 'magnetic' | 'motorized';
+  status: 'locked' | 'unlocked' | 'forced' | 'held';
+  schedules: Array<{
+    name: string;
+    days: string[];
+    start_time: string;
+    end_time: string;
+  }>;
+  created_at: Date;
+  updated_at: Date;
+}
+```
+
+### Zone Data Model
+Zones provide logical grouping for both doors and cameras:
+
+```typescript
+interface Zone {
+  id: string;
+  tenant_id: string;
+  organization_id: string;
+  site_id: string;
+  building_id: string;
+  floor_id: string;
+  name: string;
+  type: 'public' | 'secure' | 'restricted' | 'emergency';
+  access_level: number;
+  camera_retention_override?: number;
+  emergency_lockdown_enabled: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
 ```
 
 ## 🔧 Hardware Support
