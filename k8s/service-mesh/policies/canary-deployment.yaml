@@ -1,0 +1,463 @@
+# Canary Deployment Configuration for SPARC Platform
+# Automated progressive delivery with Flagger and Istio
+# Supports canary deployments, blue/green deployments, and A/B testing
+
+# Install Flagger:
+# kubectl apply -k github.com/fluxcd/flagger//kustomize/istio
+
+# Flagger CRD for automated canary deployments
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: api-gateway
+  namespace: sparc
+spec:
+  # Target reference
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  
+  # Progress deadline
+  progressDeadlineSeconds: 600
+  
+  # Service mesh provider
+  provider: istio
+  
+  # HPA reference (optional)
+  autoscalerRef:
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    name: api-gateway
+  
+  # Service configuration
+  service:
+    port: 80
+    targetPort: 3000
+    portName: http
+    gateways:
+    - istio-ingress/sparc-gateway
+    hosts:
+    - api.sparc.io
+    - api.sparc.com
+    trafficPolicy:
+      tls:
+        mode: ISTIO_MUTUAL
+      connectionPool:
+        tcp:
+          maxConnections: 2000
+        http:
+          http2MaxRequests: 2000
+          maxRequestsPerConnection: 2
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: "gateway-error,connect-failure,refused-stream"
+  
+  # Canary analysis configuration
+  analysis:
+    # Schedule - progressive delivery
+    interval: 1m          # Check metrics every minute
+    threshold: 10         # Number of failed checks before rollback
+    maxWeight: 50         # Maximum traffic to canary
+    stepWeight: 10        # Traffic increment per step
+    stepWeightPromotion: 100  # Promote to 100% after success
+    
+    # Metrics
+    metrics:
+    - name: request-success-rate
+      thresholdRange:
+        min: 99
+      interval: 1m
+    - name: request-duration
+      thresholdRange:
+        max: 500
+      interval: 1m
+    - name: error-rate
+      thresholdRange:
+        max: 1
+      interval: 1m
+    
+    # Pre-rollout webhook
+    webhooks:
+    - name: pre-rollout
+      type: pre-rollout
+      url: http://flagger-loadtester.test/
+      timeout: 30s
+      metadata:
+        type: bash
+        cmd: "curl -s http://api-gateway-canary.sparc/health | grep -q 'ok'"
+    
+    # Load testing during canary
+    - name: load-test
+      type: rollout
+      url: http://flagger-loadtester.test/
+      timeout: 5s
+      metadata:
+        cmd: "hey -z 1m -q 10 -c 2 http://api-gateway-canary.sparc/api/v1/health"
+    
+    # Alerts
+    alerts:
+    - name: "Canary deployment failed"
+      severity: error
+      providerRef:
+        name: slack
+        namespace: flagger-system
+---
+# Video Management Service Canary - Blue/Green Strategy
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: video-management-service
+  namespace: sparc
+  annotations:
+    flagger.app/config: |
+      {
+        "canary": {
+          "headers": {
+            "x-canary": "video-v2"
+          }
+        }
+      }
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: video-management-service
+  
+  progressDeadlineSeconds: 1200  # Longer for video service
+  
+  provider: istio
+  
+  service:
+    port: 80
+    targetPort: 3002
+    portName: http
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 5000
+        http:
+          http2MaxRequests: 5000
+          maxRequestsPerConnection: 1
+      outlierDetection:
+        consecutive5xxErrors: 10
+        interval: 30s
+        baseEjectionTime: 60s
+  
+  # Blue/Green deployment strategy for video service
+  analysis:
+    interval: 2m
+    threshold: 5
+    iterations: 10
+    
+    # Mirror 100% traffic to canary for testing
+    mirror: true
+    mirrorWeight: 100
+    
+    # Promotion configuration
+    promotion:
+      enabled: true
+      autoPromotionEnabled: false  # Require manual approval
+    
+    metrics:
+    - name: request-success-rate
+      thresholdRange:
+        min: 99.5
+      interval: 2m
+    - name: video-processing-latency
+      templateRef:
+        name: video-latency
+        namespace: sparc
+      thresholdRange:
+        max: 500  # milliseconds - strict for video
+    - name: video-stream-quality
+      templateRef:
+        name: stream-quality
+        namespace: sparc
+      thresholdRange:
+        min: 0.95  # 95% quality score
+    
+    # Manual approval gate
+    webhooks:
+    - name: manual-approval
+      type: confirm-rollout
+      url: http://flagger-loadtester.test/gate/approve
+---
+# Analytics Service A/B Testing
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: analytics-service
+  namespace: sparc
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: analytics-service
+  
+  provider: istio
+  
+  service:
+    port: 80
+    targetPort: 3005
+    portName: http
+    headers:
+      request:
+        set:
+          x-canary: "true"
+          x-ab-test: "analytics-v2"
+    match:
+    - headers:
+        x-user-group:
+          regex: "beta|canary"
+    corsPolicy:
+      allowOrigins:
+      - exact: "https://app.sparc.io"
+      allowMethods:
+      - GET
+      - POST
+      allowHeaders:
+      - authorization
+      - content-type
+  
+  # A/B Testing configuration with business metrics
+  analysis:
+    interval: 5m          # Longer interval for statistical significance
+    threshold: 10
+    iterations: 20        # More iterations for A/B testing
+    
+    # A/B split configuration
+    canaryWeight: 50      # 50/50 split for A/B test
+    
+    # A/B test metrics
+    metrics:
+    - name: conversion-rate
+      templateRef:
+        name: conversion-rate
+        namespace: sparc
+      thresholdRange:
+        min: 1.2  # 20% improvement
+    - name: user-engagement
+      templateRef:
+        name: user-engagement
+        namespace: sparc
+      thresholdRange:
+        min: 1.1  # 10% improvement
+---
+# Custom metric template for video latency
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: video-latency
+  namespace: sparc
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.monitoring:9090
+  query: |
+    histogram_quantile(0.95,
+      sum(rate(
+        istio_request_duration_milliseconds_bucket{
+          reporter="destination",
+          destination_service_name="{{ name }}",
+          destination_service_namespace="{{ namespace }}"
+        }[{{ interval }}]
+      )) by (le)
+    )
+---
+# Custom metric template for conversion rate
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: conversion-rate
+  namespace: sparc
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.monitoring:9090
+  query: |
+    sum(rate(analytics_conversions_total{
+      service="{{ name }}",
+      namespace="{{ namespace }}",
+      canary="true"
+    }[{{ interval }}])) 
+    / 
+    sum(rate(analytics_conversions_total{
+      service="{{ name }}",
+      namespace="{{ namespace }}",
+      canary="false"
+    }[{{ interval }}]))
+---
+# Access Control Service - Critical Service Canary
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: access-control-service
+  namespace: sparc
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: access-control-service
+  
+  provider: istio
+  
+  # Conservative rollout for critical service
+  progressDeadlineSeconds: 1800  # 30 minutes
+  
+  service:
+    port: 80
+    targetPort: 3001
+    portName: http
+  
+  analysis:
+    interval: 2m
+    threshold: 3          # Very strict - only 3 failures allowed
+    maxWeight: 20         # Maximum 20% traffic to canary
+    stepWeight: 5         # Small increments
+    
+    metrics:
+    - name: request-success-rate
+      thresholdRange:
+        min: 99.9       # Very high success rate required
+      interval: 2m
+    - name: access-denied-errors
+      templateRef:
+        name: access-errors
+        namespace: sparc
+      thresholdRange:
+        max: 0.1        # Less than 0.1% access errors
+    
+    # Alert on any issues
+    alerts:
+    - name: "Critical: Access Control canary failing"
+      severity: critical
+      providerRef:
+        name: pagerduty
+        namespace: flagger-system
+---
+# Auth Service - Zero Downtime Deployment
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: auth-service
+  namespace: sparc
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: auth-service
+  
+  provider: istio
+  
+  # Skip analysis for patches
+  skipAnalysis: false
+  
+  service:
+    port: 80
+    targetPort: 3001
+    portName: http
+    
+  analysis:
+    interval: 1m
+    threshold: 5
+    maxWeight: 30         # Conservative for auth
+    stepWeight: 10
+    
+    metrics:
+    - name: request-success-rate
+      thresholdRange:
+        min: 99.5
+    - name: request-duration
+      thresholdRange:
+        max: 200        # Fast auth responses required
+    - name: jwt-validation-errors
+      templateRef:
+        name: jwt-errors
+        namespace: sparc
+      thresholdRange:
+        max: 0.5        # Less than 0.5% JWT errors
+---
+# Custom metric for stream quality
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: stream-quality
+  namespace: sparc
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.monitoring:9090
+  query: |
+    avg(video_stream_quality_score{
+      service="{{ name }}",
+      namespace="{{ namespace }}"
+    })
+---
+# Custom metric for access errors
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: access-errors
+  namespace: sparc
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.monitoring:9090
+  query: |
+    sum(rate(access_control_denied_total{
+      service="{{ name }}",
+      namespace="{{ namespace }}"
+    }[{{ interval }}])) 
+    / 
+    sum(rate(access_control_requests_total{
+      service="{{ name }}",
+      namespace="{{ namespace }}"
+    }[{{ interval }}])) * 100
+---
+# Custom metric for JWT validation errors
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: jwt-errors
+  namespace: sparc
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.monitoring:9090
+  query: |
+    sum(rate(auth_jwt_validation_errors_total{
+      service="{{ name }}",
+      namespace="{{ namespace }}"
+    }[{{ interval }}])) 
+    / 
+    sum(rate(auth_jwt_validations_total{
+      service="{{ name }}",
+      namespace="{{ namespace }}"
+    }[{{ interval }}])) * 100
+---
+# Global canary settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flagger-config
+  namespace: istio-system
+data:
+  # Global settings for all canaries
+  mesh.provider: "istio"
+  metrics.address: "http://prometheus.monitoring:9090"
+  slack.url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+  slack.channel: "#deployments"
+  pagerduty.url: "https://events.pagerduty.com/v2/enqueue"
+  
+  # Default canary analysis
+  canary.analysis.interval: "1m"
+  canary.analysis.threshold: "10"
+  canary.analysis.maxWeight: "50"
+  canary.analysis.stepWeight: "10"
+  
+  # Default metrics
+  canary.metrics.request-success-rate.min: "99"
+  canary.metrics.request-duration.max: "500"
+  canary.metrics.error-rate.max: "1"

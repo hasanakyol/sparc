@@ -1,0 +1,409 @@
+# Telemetry Configuration for SPARC Service Mesh
+# Configures metrics, traces, and access logs for comprehensive observability
+
+# Global telemetry configuration
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: default-metrics
+  namespace: istio-system
+spec:
+  # Metrics configuration
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    # Add custom dimensions for multi-tenancy
+    - match:
+        metric: ALL_METRICS
+      tagOverrides:
+        organization_id:
+          value: request.headers["x-organization-id"] | "unknown"
+        tenant_id:
+          value: request.headers["x-tenant-id"] | "unknown"
+        site_id:
+          value: request.headers["x-site-id"] | "unknown"
+        user_id:
+          value: request.headers["x-user-id"] | "unknown"
+        api_version:
+          value: request.path | regexExtract("^/api/(v[0-9]+)/.*") | "unknown"
+    # Disable metrics for health check endpoints
+    - match:
+        metric: ALL_METRICS
+        uri:
+          prefix: /health
+      disabled: true
+    - match:
+        metric: ALL_METRICS
+        uri:
+          exact: /ready
+      disabled: true
+    - match:
+        metric: ALL_METRICS
+        uri:
+          exact: /metrics
+      disabled: true
+---
+# Request/Response logging configuration
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: access-logging
+  namespace: istio-system
+spec:
+  accessLogging:
+  - providers:
+    - name: otel
+    filter:
+      # Log errors, slow requests, and debug requests
+      expression: |
+        response.code >= 400 || 
+        response.duration > 1000ms || 
+        request.headers["x-debug"] == "true" ||
+        request.headers["x-trace"] == "true"
+---
+# Distributed tracing configuration
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: distributed-tracing
+  namespace: istio-system
+spec:
+  tracing:
+  - providers:
+    - name: jaeger
+    randomSamplingPercentage: 100.0  # Start with 100%, adjust based on volume
+    customTags:
+      organization_id:
+        header:
+          name: x-organization-id
+          defaultValue: "unknown"
+      tenant_id:
+        header:
+          name: x-tenant-id
+          defaultValue: "unknown"
+      site_id:
+        header:
+          name: x-site-id
+          defaultValue: "unknown"
+      user_id:
+        header:
+          name: x-user-id
+          defaultValue: "unknown"
+      request_id:
+        header:
+          name: x-request-id
+          defaultValue: "unknown"
+      canary:
+        literal:
+          value: destination.labels["canary"] | "false"
+      version:
+        literal:
+          value: destination.labels["version"] | "v1"
+---
+# Video Management Service telemetry - optimized for high volume
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: video-management-telemetry
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: video-management-service
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: REQUEST_COUNT
+      tagOverrides:
+        stream_type:
+          value: request.headers["x-stream-type"] | "unknown"
+        video_codec:
+          value: request.headers["x-video-codec"] | "unknown"
+        resolution:
+          value: request.headers["x-video-resolution"] | "unknown"
+        bitrate:
+          value: request.headers["x-video-bitrate"] | "unknown"
+  tracing:
+  - providers:
+    - name: jaeger
+    randomSamplingPercentage: 1.0  # 1% sampling for video streams
+  accessLogging:
+  - providers:
+    - name: otel
+    filter:
+      # Only log errors for video service
+      expression: 'response.code >= 500'
+---
+# Auth Service telemetry - comprehensive tracking for security
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: auth-service-telemetry
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-service
+  tracing:
+  - providers:
+    - name: jaeger
+    randomSamplingPercentage: 100.0  # Trace all auth requests
+  accessLogging:
+  - providers:
+    - name: otel
+    # Log all auth requests for security audit
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: REQUEST_COUNT
+      tagOverrides:
+        auth_result:
+          value: response.headers["x-auth-result"] | "unknown"
+        auth_method:
+          value: request.headers["x-auth-method"] | "unknown"
+---
+# Analytics Service telemetry
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: analytics-service-telemetry
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: analytics-service
+  tracing:
+  - providers:
+    - name: jaeger
+    randomSamplingPercentage: 50.0  # 50% sampling for analytics
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: REQUEST_COUNT
+      tagOverrides:
+        report_type:
+          value: request.headers["x-report-type"] | "unknown"
+        time_range:
+          value: request.headers["x-time-range"] | "unknown"
+---
+# Access Control Service telemetry
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: access-control-telemetry
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: access-control-service
+  tracing:
+  - providers:
+    - name: jaeger
+    randomSamplingPercentage: 100.0  # Trace all access events
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: REQUEST_COUNT
+      tagOverrides:
+        access_result:
+          value: response.headers["x-access-result"] | "unknown"
+        door_id:
+          value: request.headers["x-door-id"] | "unknown"
+        credential_type:
+          value: request.headers["x-credential-type"] | "unknown"
+---
+# Event Processing Service telemetry
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: event-processing-telemetry
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: event-processing-service
+  tracing:
+  - providers:
+    - name: jaeger
+    randomSamplingPercentage: 20.0  # 20% sampling for events
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: REQUEST_COUNT
+      tagOverrides:
+        event_type:
+          value: request.headers["x-event-type"] | "unknown"
+        event_priority:
+          value: request.headers["x-event-priority"] | "normal"
+---
+# Alert Service telemetry - high priority tracking
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: alert-service-telemetry
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alert-service
+  tracing:
+  - providers:
+    - name: jaeger
+    randomSamplingPercentage: 100.0  # Trace all alerts
+  accessLogging:
+  - providers:
+    - name: otel
+    # Log all alert requests
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: REQUEST_COUNT
+      tagOverrides:
+        alert_type:
+          value: request.headers["x-alert-type"] | "unknown"
+        alert_severity:
+          value: request.headers["x-alert-severity"] | "unknown"
+        alert_delivered:
+          value: response.headers["x-alert-delivered"] | "unknown"
+---
+# Database telemetry configuration
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: database-telemetry
+  namespace: database
+spec:
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: TCP_OPENED_CONNECTIONS
+      tagOverrides:
+        source_service:
+          value: source.workload.name | "unknown"
+        database:
+          value: destination.service.name | "unknown"
+    - match:
+        metric: TCP_CLOSED_CONNECTIONS
+      tagOverrides:
+        source_service:
+          value: source.workload.name | "unknown"
+---
+# Circuit breaker and performance telemetry
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: circuit-breaker-telemetry
+  namespace: istio-system
+spec:
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: ALL_METRICS
+      tagOverrides:
+        circuit_breaker_open:
+          value: |
+            connection.mtls && upstream_rq_pending_overflow > 0 ? "true" : "false"
+        outlier_detection:
+          value: |
+            connection.mtls && envoy_cluster_outlier_detection_ejections_active > 0 ? "true" : "false"
+---
+# SLA monitoring telemetry
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: sla-monitoring
+  namespace: sparc
+spec:
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    # Track API response time SLA (< 200ms)
+    - match:
+        metric: REQUEST_DURATION
+      tagOverrides:
+        sla_violated:
+          value: |
+            has(response.duration) && response.duration > 200ms ? "true" : "false"
+        response_bucket:
+          value: |
+            has(response.duration) ?
+              (response.duration < 50ms ? "fast" :
+               response.duration < 200ms ? "normal" :
+               response.duration < 1000ms ? "slow" : "very_slow") : "unknown"
+    # Track video latency SLA (< 500ms)
+    - match:
+        metric: REQUEST_DURATION
+        destination_service_name:
+          prefix: "video"
+      tagOverrides:
+        video_sla_violated:
+          value: |
+            has(response.duration) && response.duration > 500ms ? "true" : "false"
+---
+# Canary deployment telemetry
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: canary-telemetry
+  namespace: sparc
+spec:
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - match:
+        metric: ALL_METRICS
+      tagOverrides:
+        canary:
+          value: destination.labels["canary"] | "false"
+        version:
+          value: destination.labels["version"] | "unknown"
+        deployment_id:
+          value: destination.labels["deployment-id"] | "unknown"
+---
+# Error tracking and debugging telemetry
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: error-tracking
+  namespace: istio-system
+spec:
+  accessLogging:
+  - providers:
+    - name: otel
+    filter:
+      # Log all 5xx errors and client errors
+      expression: 'response.code >= 400'
+  tracing:
+  - providers:
+    - name: jaeger
+    customTags:
+      error_code:
+        literal:
+          value: response.code | "0"
+      error_message:
+        header:
+          name: x-error-message
+          defaultValue: "unknown"
+      stack_trace:
+        header:
+          name: x-stack-trace
+          defaultValue: "none"

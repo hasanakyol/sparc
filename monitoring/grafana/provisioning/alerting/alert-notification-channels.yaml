@@ -1,0 +1,193 @@
+apiVersion: 1
+
+notifiers:
+  - name: 'PagerDuty - Critical'
+    type: pagerduty
+    uid: pagerduty-critical
+    org_id: 1
+    is_default: false
+    settings:
+      integrationKey: ${PAGERDUTY_INTEGRATION_KEY}
+      severity: critical
+      class: error_monitoring
+      component: sparc
+      group: production
+    secure_settings:
+      integrationKey: ${PAGERDUTY_INTEGRATION_KEY}
+
+  - name: 'Slack - Error Alerts'
+    type: slack
+    uid: slack-errors
+    org_id: 1
+    is_default: true
+    settings:
+      url: ${SLACK_WEBHOOK_URL}
+      recipient: '#error-alerts'
+      username: 'SPARC Error Monitor'
+      icon_emoji: ':rotating_light:'
+      mention_users: '@oncall-engineer'
+      mention_groups: '@sre-team'
+      token: ${SLACK_TOKEN}
+
+  - name: 'Email - SRE Team'
+    type: email
+    uid: email-sre
+    org_id: 1
+    is_default: false
+    settings:
+      addresses: 'sre-team@sparc.com;oncall@sparc.com'
+      singleEmail: false
+      
+  - name: 'Webhook - Incident Management'
+    type: webhook
+    uid: webhook-incident
+    org_id: 1
+    is_default: false
+    settings:
+      url: 'https://incidents.sparc.com/api/v1/alerts'
+      httpMethod: 'POST'
+      username: 'grafana'
+      password: ${INCIDENT_WEBHOOK_PASSWORD}
+      
+  - name: 'Opsgenie - High Priority'
+    type: opsgenie
+    uid: opsgenie-high
+    org_id: 1
+    is_default: false
+    settings:
+      apiKey: ${OPSGENIE_API_KEY}
+      apiUrl: 'https://api.opsgenie.com/v2/alerts'
+      autoClose: true
+      overridePriority: true
+      priority: 'P1'
+
+# Alert notification policies
+notification_policies:
+  - name: 'Critical Errors Policy'
+    uid: critical-errors-policy
+    receivers:
+      - pagerduty-critical
+      - slack-errors
+      - email-sre
+      - webhook-incident
+    routes:
+      - match:
+          severity: critical
+        receivers:
+          - pagerduty-critical
+          - opsgenie-high
+        continue: true
+      - match:
+          team: security
+          security_incident: true
+        receivers:
+          - pagerduty-critical
+          - email-sre
+        settings:
+          repeat_interval: 5m
+      - match:
+          alertname: ErrorBudgetExhausted
+        receivers:
+          - slack-errors
+          - email-sre
+        settings:
+          repeat_interval: 1h
+
+  - name: 'Warning Errors Policy'
+    uid: warning-errors-policy
+    receivers:
+      - slack-errors
+    routes:
+      - match:
+          severity: warning
+        receivers:
+          - slack-errors
+        settings:
+          repeat_interval: 30m
+      - match:
+          alertname: HighErrorRate
+        receivers:
+          - slack-errors
+          - email-sre
+        settings:
+          repeat_interval: 15m
+
+# Contact points for Grafana 9+ unified alerting
+contact_points:
+  - name: 'Critical Escalation'
+    uid: critical-escalation
+    contacts:
+      - type: pagerduty
+        settings:
+          integrationKey: ${PAGERDUTY_INTEGRATION_KEY}
+          severity: critical
+      - type: slack
+        settings:
+          webhook: ${SLACK_WEBHOOK_URL}
+          title: 'CRITICAL: {{ .GroupLabels.alertname }}'
+          text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+      - type: webhook
+        settings:
+          url: 'https://incidents.sparc.com/api/v1/critical'
+          httpMethod: POST
+
+  - name: 'Error Monitoring'
+    uid: error-monitoring
+    contacts:
+      - type: slack
+        settings:
+          webhook: ${SLACK_WEBHOOK_URL}
+          recipient: '#error-monitoring'
+          title: '{{ .GroupLabels.alertname }} - {{ .GroupLabels.service }}'
+          text: |
+            *Alert:* {{ .GroupLabels.alertname }}
+            *Service:* {{ .GroupLabels.service }}
+            *Severity:* {{ .GroupLabels.severity }}
+            {{ range .Alerts }}
+            *Description:* {{ .Annotations.description }}
+            *Runbook:* {{ .Annotations.runbook_url }}
+            {{ end }}
+
+  - name: 'Security Incidents'
+    uid: security-incidents
+    contacts:
+      - type: pagerduty
+        settings:
+          integrationKey: ${PAGERDUTY_SECURITY_KEY}
+          severity: critical
+          class: security_incident
+      - type: email
+        settings:
+          addresses: 'security@sparc.com;ciso@sparc.com'
+          subject: 'SECURITY INCIDENT: {{ .GroupLabels.alertname }}'
+          message: |
+            Security incident detected requiring immediate attention.
+            
+            Alert: {{ .GroupLabels.alertname }}
+            Time: {{ .StartsAt }}
+            
+            {{ range .Alerts }}
+            Description: {{ .Annotations.description }}
+            Action Required: {{ .Annotations.action }}
+            Runbook: {{ .Annotations.runbook_url }}
+            {{ end }}
+
+# Mute timings for maintenance windows
+mute_timings:
+  - name: 'Maintenance Window'
+    uid: maintenance-window
+    time_intervals:
+      - weekdays: ['sunday']
+        times:
+          - start_time: '02:00'
+            end_time: '06:00'
+        location: 'UTC'
+
+  - name: 'Non-Critical Hours'
+    uid: non-critical-hours
+    time_intervals:
+      - weekdays: ['monday:friday']
+        times:
+          - start_time: '22:00'
+            end_time: '06:00'
+        location: 'UTC'

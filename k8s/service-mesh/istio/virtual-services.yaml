@@ -1,0 +1,618 @@
+# Main API Gateway Virtual Service with Canary Deployment
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-gateway
+  namespace: sparc
+spec:
+  hosts:
+  - api.sparc.io
+  - api-gateway.sparc.svc.cluster.local
+  gateways:
+  - istio-ingress/sparc-gateway
+  - mesh
+  http:
+  # Canary deployment - Header-based routing for testing
+  - match:
+    - headers:
+        x-version:
+          exact: v2
+    route:
+    - destination:
+        host: api-gateway.sparc.svc.cluster.local
+        subset: v2
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # Canary deployment - 10% traffic split
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"
+    route:
+    - destination:
+        host: api-gateway.sparc.svc.cluster.local
+        subset: v2
+      weight: 10
+    - destination:
+        host: api-gateway.sparc.svc.cluster.local
+        subset: v1
+      weight: 90
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # Default route to v1
+  - route:
+    - destination:
+        host: api-gateway.sparc.svc.cluster.local
+        subset: v1
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+    headers:
+      response:
+        set:
+          x-envoy-upstream-service-time: "%RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)%"
+---
+# Video Management Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: video-management-service
+  namespace: sparc
+spec:
+  hosts:
+  - video-management-service.sparc.svc.cluster.local
+  http:
+  # Live streaming - no timeout, no retries
+  - match:
+    - uri:
+        prefix: /api/video/live/
+    - uri:
+        prefix: /api/streams/
+    route:
+    - destination:
+        host: video-management-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 0s  # No timeout for streaming
+  # Video on demand - longer timeout
+  - match:
+    - uri:
+        prefix: /api/video/vod/
+    - uri:
+        prefix: /api/recordings/
+    route:
+    - destination:
+        host: video-management-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 300s
+    retries:
+      attempts: 2
+      perTryTimeout: 60s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # Camera management - standard timeout
+  - match:
+    - uri:
+        prefix: /api/cameras/
+    route:
+    - destination:
+        host: video-management-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Auth Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: auth-service
+  namespace: sparc
+spec:
+  hosts:
+  - auth-service.sparc.svc.cluster.local
+  http:
+  # Test fault injection (only in non-prod)
+  - match:
+    - headers:
+        x-test-fault:
+          exact: "true"
+        x-environment:
+          exact: "test"
+    fault:
+      delay:
+        percentage:
+          value: 10
+        fixedDelay: 5s
+      abort:
+        percentage:
+          value: 5
+        httpStatus: 503
+    route:
+    - destination:
+        host: auth-service.sparc.svc.cluster.local
+        subset: v1
+  # Canary deployment for auth service
+  - match:
+    - headers:
+        x-auth-canary:
+          exact: "true"
+    route:
+    - destination:
+        host: auth-service.sparc.svc.cluster.local
+        subset: v2
+      weight: 5  # Only 5% for auth canary
+    - destination:
+        host: auth-service.sparc.svc.cluster.local
+        subset: v1
+      weight: 95
+    timeout: 10s
+    retries:
+      attempts: 2
+      perTryTimeout: 3s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # Default route
+  - route:
+    - destination:
+        host: auth-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 10s
+    retries:
+      attempts: 2
+      perTryTimeout: 3s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Analytics Service Virtual Service with A/B Testing
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: analytics-service
+  namespace: sparc
+spec:
+  hosts:
+  - analytics-service.sparc.svc.cluster.local
+  http:
+  # Beta users get v2
+  - match:
+    - headers:
+        x-user-group:
+          exact: beta
+    route:
+    - destination:
+        host: analytics-service.sparc.svc.cluster.local
+        subset: v2
+    timeout: 60s
+    retries:
+      attempts: 3
+      perTryTimeout: 20s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # A/B test - 20% to v2
+  - match:
+    - headers:
+        x-ab-test:
+          exact: analytics-v2
+    route:
+    - destination:
+        host: analytics-service.sparc.svc.cluster.local
+        subset: v2
+      weight: 20
+    - destination:
+        host: analytics-service.sparc.svc.cluster.local
+        subset: v1
+      weight: 80
+    timeout: 60s
+    retries:
+      attempts: 3
+      perTryTimeout: 20s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # Default to v1
+  - route:
+    - destination:
+        host: analytics-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 60s
+    retries:
+      attempts: 3
+      perTryTimeout: 20s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Access Control Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: access-control-service
+  namespace: sparc
+spec:
+  hosts:
+  - access-control-service.sparc.svc.cluster.local
+  http:
+  # Critical access events - fast timeout, more retries
+  - match:
+    - uri:
+        prefix: /api/access-events/
+    - uri:
+        prefix: /api/doors/unlock
+    route:
+    - destination:
+        host: access-control-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 5s
+    retries:
+      attempts: 5
+      perTryTimeout: 1s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # Default route
+  - route:
+    - destination:
+        host: access-control-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Device Management Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: device-management-service
+  namespace: sparc
+spec:
+  hosts:
+  - device-management-service.sparc.svc.cluster.local
+  http:
+  # Device discovery - longer timeout
+  - match:
+    - uri:
+        prefix: /api/device-discovery/
+    route:
+    - destination:
+        host: device-management-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 60s
+    retries:
+      attempts: 2
+      perTryTimeout: 30s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # Default route
+  - route:
+    - destination:
+        host: device-management-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Event Processing Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: event-processing-service
+  namespace: sparc
+spec:
+  hosts:
+  - event-processing-service.sparc.svc.cluster.local
+  http:
+  - route:
+    - destination:
+        host: event-processing-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 10s  # Fast processing for events
+    retries:
+      attempts: 3
+      perTryTimeout: 3s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Mobile Credential Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: mobile-credential-service
+  namespace: sparc
+spec:
+  hosts:
+  - mobile-credential-service.sparc.svc.cluster.local
+  http:
+  - route:
+    - destination:
+        host: mobile-credential-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 15s
+    retries:
+      attempts: 3
+      perTryTimeout: 5s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Tenant Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: tenant-service
+  namespace: sparc
+spec:
+  hosts:
+  - tenant-service.sparc.svc.cluster.local
+  http:
+  - route:
+    - destination:
+        host: tenant-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 20s
+    retries:
+      attempts: 3
+      perTryTimeout: 6s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Visitor Management Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: visitor-management-service
+  namespace: sparc
+spec:
+  hosts:
+  - visitor-management-service.sparc.svc.cluster.local
+  http:
+  - route:
+    - destination:
+        host: visitor-management-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Reporting Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: reporting-service
+  namespace: sparc
+spec:
+  hosts:
+  - reporting-service.sparc.svc.cluster.local
+  http:
+  # Report generation - long timeout
+  - match:
+    - uri:
+        prefix: /api/reports/generate
+    route:
+    - destination:
+        host: reporting-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 300s  # 5 minutes for report generation
+    retries:
+      attempts: 2
+      perTryTimeout: 150s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # Default route
+  - route:
+    - destination:
+        host: reporting-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 60s
+    retries:
+      attempts: 3
+      perTryTimeout: 20s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Alert Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: alert-service
+  namespace: sparc
+spec:
+  hosts:
+  - alert-service.sparc.svc.cluster.local
+  http:
+  - route:
+    - destination:
+        host: alert-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 5s  # Fast for alerts
+    retries:
+      attempts: 5  # More retries for critical alerts
+      perTryTimeout: 1s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Environmental Service Virtual Service  
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: environmental-service
+  namespace: sparc
+spec:
+  hosts:
+  - environmental-service.sparc.svc.cluster.local
+  http:
+  - route:
+    - destination:
+        host: environmental-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Integration Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: integration-service
+  namespace: sparc
+spec:
+  hosts:
+  - integration-service.sparc.svc.cluster.local
+  http:
+  # External integrations - longer timeout
+  - match:
+    - uri:
+        prefix: /api/integrations/external/
+    route:
+    - destination:
+        host: integration-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 60s
+    retries:
+      attempts: 3
+      perTryTimeout: 20s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # Default route
+  - route:
+    - destination:
+        host: integration-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Maintenance Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: maintenance-service
+  namespace: sparc
+spec:
+  hosts:
+  - maintenance-service.sparc.svc.cluster.local
+  http:
+  - route:
+    - destination:
+        host: maintenance-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 60s  # Longer for maintenance operations
+    retries:
+      attempts: 3
+      perTryTimeout: 20s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# Security Compliance Service Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: security-compliance-service
+  namespace: sparc
+spec:
+  hosts:
+  - security-compliance-service.sparc.svc.cluster.local
+  http:
+  # Compliance scans - long timeout
+  - match:
+    - uri:
+        prefix: /api/compliance/scan
+    route:
+    - destination:
+        host: security-compliance-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 300s  # 5 minutes for scans
+    retries:
+      attempts: 2
+      perTryTimeout: 150s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  # Default route
+  - route:
+    - destination:
+        host: security-compliance-service.sparc.svc.cluster.local
+        subset: v1
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+---
+# WebSocket Support for Real-time Features
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: websocket-gateway
+  namespace: sparc
+spec:
+  hosts:
+  - ws.sparc.io
+  - api-gateway.sparc.svc.cluster.local
+  gateways:
+  - istio-ingress/sparc-gateway
+  - mesh
+  http:
+  # WebSocket upgrade for real-time features
+  - match:
+    - headers:
+        upgrade:
+          exact: websocket
+    route:
+    - destination:
+        host: api-gateway.sparc.svc.cluster.local
+        subset: v1
+    timeout: 0s  # No timeout for WebSocket connections
+    websocketUpgrade: true  # Enable WebSocket upgrade
+---
+# Database Virtual Service for connection pooling
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: postgresql
+  namespace: database
+spec:
+  hosts:
+  - postgresql.database.svc.cluster.local
+  tcp:
+  - match:
+    - port: 5432
+    route:
+    - destination:
+        host: postgresql.database.svc.cluster.local
+        port:
+          number: 5432
+---
+# Redis Virtual Service
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: redis
+  namespace: database
+spec:
+  hosts:
+  - redis.database.svc.cluster.local
+  tcp:
+  - match:
+    - port: 6379
+    route:
+    - destination:
+        host: redis.database.svc.cluster.local
+        port:
+          number: 6379
+---
+# External Service Virtual Service (for third-party APIs)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: external-apis
+  namespace: sparc
+spec:
+  hosts:
+  - "*.external.sparc.io"
+  http:
+  - timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+    route:
+    - destination:
+        host: istio-egressgateway.istio-system.svc.cluster.local

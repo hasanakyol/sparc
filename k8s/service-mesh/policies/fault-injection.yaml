@@ -1,0 +1,287 @@
+# Fault Injection Policies for Chaos Testing
+# These policies help test system resilience
+
+# Auth Service Fault Injection - Test authentication failures
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: auth-service-fault-injection
+  namespace: sparc
+spec:
+  hosts:
+  - auth-service
+  http:
+  - match:
+    - headers:
+        x-chaos-test:
+          exact: "auth-delay"
+    fault:
+      delay:
+        percentage:
+          value: 50.0
+        fixedDelay: 5s
+    route:
+    - destination:
+        host: auth-service
+  - match:
+    - headers:
+        x-chaos-test:
+          exact: "auth-error"
+    fault:
+      abort:
+        percentage:
+          value: 25.0
+        httpStatus: 503
+    route:
+    - destination:
+        host: auth-service
+  - route:
+    - destination:
+        host: auth-service
+---
+# Video Processor Fault Injection - Test streaming failures
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: video-processor-fault-injection
+  namespace: sparc
+spec:
+  hosts:
+  - video-processor
+  http:
+  - match:
+    - headers:
+        x-chaos-test:
+          exact: "video-bandwidth"
+    fault:
+      delay:
+        percentage:
+          value: 100.0
+        fixedDelay: 2s  # Simulate bandwidth issues
+    route:
+    - destination:
+        host: video-processor
+  - match:
+    - headers:
+        x-chaos-test:
+          exact: "video-corrupt"
+    fault:
+      abort:
+        percentage:
+          value: 10.0
+        httpStatus: 500
+    route:
+    - destination:
+        host: video-processor
+  - route:
+    - destination:
+        host: video-processor
+---
+# Database Connection Fault Injection
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: database-fault-injection
+  namespace: database
+spec:
+  hosts:
+  - postgresql
+  tcp:
+  - match:
+    - sourceLabels:
+        chaos-test: "db-latency"
+    fault:
+      delay:
+        percentage:
+          value: 80.0
+        fixedDelay: 3s
+    route:
+    - destination:
+        host: postgresql
+  - match:
+    - sourceLabels:
+        chaos-test: "db-connection"
+    fault:
+      abort:
+        percentage:
+          value: 30.0
+    route:
+    - destination:
+        host: postgresql
+  - route:
+    - destination:
+        host: postgresql
+---
+# Redis Cache Fault Injection
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: redis-fault-injection
+  namespace: database
+spec:
+  hosts:
+  - redis
+  tcp:
+  - match:
+    - sourceLabels:
+        chaos-test: "cache-miss"
+    fault:
+      abort:
+        percentage:
+          value: 50.0  # Simulate cache misses
+    route:
+    - destination:
+        host: redis
+  - route:
+    - destination:
+        host: redis
+---
+# Analytics Service Fault Injection - Test computation delays
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: analytics-fault-injection
+  namespace: sparc
+spec:
+  hosts:
+  - analytics-service
+  http:
+  - match:
+    - headers:
+        x-chaos-test:
+          exact: "analytics-overload"
+    fault:
+      delay:
+        percentage:
+          value: 100.0
+        exponentialDelay: 2s  # Exponential backoff simulation
+    route:
+    - destination:
+        host: analytics-service
+  - match:
+    - headers:
+        x-chaos-test:
+          exact: "analytics-partial"
+    fault:
+      abort:
+        percentage:
+          value: 20.0
+        grpcStatus: 14  # UNAVAILABLE
+    route:
+    - destination:
+        host: analytics-service
+  - route:
+    - destination:
+        host: analytics-service
+---
+# Notification Service Fault Injection - Test alert delivery
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: notification-fault-injection
+  namespace: sparc
+spec:
+  hosts:
+  - notification-service
+  http:
+  - match:
+    - headers:
+        x-chaos-test:
+          exact: "notification-delay"
+    fault:
+      delay:
+        percentage:
+          value: 75.0
+        fixedDelay: 10s  # Simulate slow email/SMS delivery
+    route:
+    - destination:
+        host: notification-service
+  - route:
+    - destination:
+        host: notification-service
+---
+# Chaos Mesh CRD for advanced chaos engineering
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: network-partition-test
+  namespace: sparc
+spec:
+  action: partition
+  mode: all
+  selector:
+    namespaces:
+    - sparc
+    labelSelectors:
+      app: video-processor
+  direction: both
+  target:
+    selector:
+      namespaces:
+      - database
+      labelSelectors:
+        app: postgresql
+  duration: "60s"
+  scheduler:
+    cron: "@hourly"
+---
+# Pod Chaos - Random pod failures
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: pod-failure-test
+  namespace: sparc
+spec:
+  action: pod-failure
+  mode: random-max-percent
+  value: "30"
+  selector:
+    namespaces:
+    - sparc
+    labelSelectors:
+      chaos-testing: "enabled"
+  duration: "30s"
+  scheduler:
+    cron: "0 */6 * * *"  # Every 6 hours
+---
+# IO Chaos - Disk latency simulation
+apiVersion: chaos-mesh.org/v1alpha1
+kind: IOChaos
+metadata:
+  name: disk-latency-test
+  namespace: sparc
+spec:
+  action: latency
+  mode: all
+  selector:
+    namespaces:
+    - sparc
+    labelSelectors:
+      app: video-processor
+  volumePath: /data
+  path: "/data/*"
+  delay: "100ms"
+  percent: 50
+  duration: "5m"
+---
+# Stress Chaos - CPU/Memory pressure
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: resource-pressure-test
+  namespace: sparc
+spec:
+  mode: one
+  selector:
+    namespaces:
+    - sparc
+    labelSelectors:
+      app: analytics-service
+  stressors:
+    cpu:
+      workers: 2
+      load: 80
+    memory:
+      workers: 1
+      size: "256MB"
+  duration: "2m"

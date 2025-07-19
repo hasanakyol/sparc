@@ -1,0 +1,419 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: analytics-service-config
+  namespace: sparc
+  labels:
+    app: analytics-service
+    component: config
+data:
+  NODE_ENV: "production"
+  PORT: "3004"
+  LOG_LEVEL: "info"
+  METRICS_PORT: "9090"
+  HEALTH_CHECK_PORT: "8080"
+  # Analytics-specific configuration
+  ANALYTICS_BATCH_SIZE: "1000"
+  ANALYTICS_PROCESSING_TIMEOUT: "300000"
+  ANALYTICS_CACHE_TTL: "3600"
+  ANALYTICS_MAX_CONCURRENT_JOBS: "10"
+  # OpenSearch configuration
+  OPENSEARCH_BATCH_SIZE: "500"
+  OPENSEARCH_FLUSH_INTERVAL: "30000"
+  OPENSEARCH_MAX_RETRIES: "3"
+  # Redis configuration
+  REDIS_ANALYTICS_DB: "2"
+  REDIS_CACHE_PREFIX: "analytics:"
+  REDIS_LOCK_TTL: "300"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-service
+  namespace: sparc
+  labels:
+    app: analytics-service
+    component: backend
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: analytics-service
+  template:
+    metadata:
+      labels:
+        app: analytics-service
+        component: backend
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: sparc-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: analytics-service
+        image: sparc/analytics-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3004
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: redis-url
+        - name: OPENSEARCH_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: opensearch-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: jwt-secret
+        envFrom:
+        - configMapRef:
+            name: analytics-service-config
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /startup
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 12
+          successThreshold: 1
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: analytics-cache
+          mountPath: /app/cache
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: analytics-cache
+        emptyDir:
+          sizeLimit: 2Gi
+      terminationGracePeriodSeconds: 60
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      tolerations:
+      - key: "sparc.io/analytics"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-service
+  namespace: sparc
+  labels:
+    app: analytics-service
+    component: backend
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3004
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: analytics-service
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: analytics-service-hpa
+  namespace: sparc
+  labels:
+    app: analytics-service
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: analytics-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      selectPolicy: Min
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: analytics-service-pdb
+  namespace: sparc
+  labels:
+    app: analytics-service
+    component: availability
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: analytics-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: analytics-service-netpol
+  namespace: sparc
+  labels:
+    app: analytics-service
+    component: security
+spec:
+  podSelector:
+    matchLabels:
+      app: analytics-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          app: web-frontend
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+      podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 3004
+    - protocol: TCP
+      port: 9090
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - podSelector:
+        matchLabels:
+          app: opensearch
+    ports:
+    - protocol: TCP
+      port: 9200
+    - protocol: TCP
+      port: 9300
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: analytics-service-monitor
+  namespace: sparc
+  labels:
+    app: analytics-service
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: analytics-service
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+  namespaceSelector:
+    matchNames:
+    - sparc
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: analytics-service-alerts
+  namespace: sparc
+  labels:
+    app: analytics-service
+    component: monitoring
+spec:
+  groups:
+  - name: analytics-service.rules
+    interval: 30s
+    rules:
+    - alert: AnalyticsServiceDown
+      expr: up{job="analytics-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: analytics-service
+      annotations:
+        summary: "Analytics service is down"
+        description: "Analytics service has been down for more than 1 minute"
+    
+    - alert: AnalyticsServiceHighCPU
+      expr: rate(container_cpu_usage_seconds_total{pod=~"analytics-service-.*"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: analytics-service
+      annotations:
+        summary: "Analytics service high CPU usage"
+        description: "Analytics service CPU usage is above 80% for more than 5 minutes"
+    
+    - alert: AnalyticsServiceHighMemory
+      expr: container_memory_usage_bytes{pod=~"analytics-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: analytics-service
+      annotations:
+        summary: "Analytics service high memory usage"
+        description: "Analytics service memory usage is above 90% for more than 5 minutes"
+    
+    - alert: AnalyticsServiceSlowProcessing
+      expr: histogram_quantile(0.95, rate(analytics_processing_duration_seconds_bucket[5m])) > 300
+      for: 2m
+      labels:
+        severity: warning
+        service: analytics-service
+      annotations:
+        summary: "Analytics service slow processing"
+        description: "95th percentile of analytics processing time is above 5 minutes"
+    
+    - alert: AnalyticsServiceHighErrorRate
+      expr: rate(analytics_errors_total[5m]) / rate(analytics_requests_total[5m]) > 0.05
+      for: 2m
+      labels:
+        severity: warning
+        service: analytics-service
+      annotations:
+        summary: "Analytics service high error rate"
+        description: "Analytics service error rate is above 5% for more than 2 minutes"
+    
+    - alert: AnalyticsServiceQueueBacklog
+      expr: analytics_queue_size > 10000
+      for: 5m
+      labels:
+        severity: warning
+        service: analytics-service
+      annotations:
+        summary: "Analytics service queue backlog"
+        description: "Analytics service has more than 10,000 items in queue for more than 5 minutes"
+    
+    - alert: AnalyticsServiceOpenSearchConnection
+      expr: analytics_opensearch_connection_errors_total > 10
+      for: 1m
+      labels:
+        severity: critical
+        service: analytics-service
+      annotations:
+        summary: "Analytics service OpenSearch connection issues"
+        description: "Analytics service has connection issues with OpenSearch"

@@ -1,0 +1,437 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-service-config
+  namespace: sparc
+  labels:
+    app: tenant-service
+    component: config
+spec:
+data:
+  NODE_ENV: "production"
+  PORT: "3010"
+  LOG_LEVEL: "info"
+  METRICS_PORT: "9090"
+  HEALTH_CHECK_PORT: "8080"
+  # Tenant management configuration
+  MAX_TENANT_DEPTH: "5"
+  DEFAULT_TENANT_QUOTA_USERS: "100"
+  DEFAULT_TENANT_QUOTA_DEVICES: "50"
+  DEFAULT_TENANT_QUOTA_STORAGE_GB: "10"
+  TENANT_ISOLATION_MODE: "strict"
+  # Database configuration
+  DB_POOL_MIN: "2"
+  DB_POOL_MAX: "10"
+  DB_TIMEOUT: "30000"
+  # Cache configuration
+  REDIS_KEY_PREFIX: "tenant:"
+  REDIS_TTL: "3600"
+  # Audit configuration
+  AUDIT_ENABLED: "true"
+  AUDIT_RETENTION_DAYS: "90"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tenant-service
+  namespace: sparc
+  labels:
+    app: tenant-service
+    component: backend
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: tenant-service
+  template:
+    metadata:
+      labels:
+        app: tenant-service
+        component: backend
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: tenant-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: tenant-service
+        image: sparc/tenant-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3010
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-database-secret
+              key: tenant-service-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-redis-secret
+              key: url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-jwt-secret
+              key: secret
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sparc-encryption-secret
+              key: tenant-key
+        envFrom:
+        - configMapRef:
+            name: tenant-service-config
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /startup
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /app/cache
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenant-service
+  namespace: sparc
+  labels:
+    app: tenant-service
+    component: backend
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3010
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: tenant-service
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tenant-service
+  namespace: sparc
+  labels:
+    app: tenant-service
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: tenant-service-hpa
+  namespace: sparc
+  labels:
+    app: tenant-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: tenant-service
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: tenant-service-pdb
+  namespace: sparc
+  labels:
+    app: tenant-service
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: tenant-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-service-network-policy
+  namespace: sparc
+  labels:
+    app: tenant-service
+spec:
+  podSelector:
+    matchLabels:
+      app: tenant-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    # Allow API Gateway
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    # Allow other services that need tenant data
+    - podSelector:
+        matchLabels:
+          app: auth-service
+    - podSelector:
+        matchLabels:
+          app: access-control-service
+    - podSelector:
+        matchLabels:
+          app: reporting-service
+    ports:
+    - protocol: TCP
+      port: 3010
+  - from:
+    # Allow Prometheus scraping
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  egress:
+  # Allow database access
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow Redis access
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow HTTPS for external APIs
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: tenant-service-monitor
+  namespace: sparc
+  labels:
+    app: tenant-service
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: tenant-service
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+    - sparc
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: tenant-service-alerts
+  namespace: sparc
+  labels:
+    app: tenant-service
+    release: prometheus
+spec:
+  groups:
+  - name: tenant-service.rules
+    interval: 30s
+    rules:
+    # Service availability alerts
+    - alert: TenantServiceDown
+      expr: up{job="tenant-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: tenant-service
+      annotations:
+        summary: "Tenant service is down"
+        description: "Tenant service has been down for more than 1 minute"
+
+    - alert: TenantServiceHighErrorRate
+      expr: rate(http_requests_total{job="tenant-service",status=~"5.."}[5m]) > 0.05
+      for: 2m
+      labels:
+        severity: warning
+        service: tenant-service
+      annotations:
+        summary: "High error rate in tenant service"
+        description: "Tenant service error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+    # Performance alerts
+    - alert: TenantServiceHighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="tenant-service"}[5m])) > 1
+      for: 5m
+      labels:
+        severity: warning
+        service: tenant-service
+      annotations:
+        summary: "High latency in tenant service"
+        description: "95th percentile latency is {{ $value }}s over the last 5 minutes"
+
+    - alert: TenantServiceHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"tenant-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: tenant-service
+      annotations:
+        summary: "High memory usage in tenant service"
+        description: "Memory usage is {{ $value | humanizePercentage }} of limit"
+
+    # Tenant-specific alerts
+    - alert: TenantQuotaExceeded
+      expr: tenant_quota_usage_ratio{service="tenant-service"} > 0.9
+      for: 1m
+      labels:
+        severity: warning
+        service: tenant-service
+      annotations:
+        summary: "Tenant quota nearly exceeded"
+        description: "Tenant {{ $labels.tenant_id }} is using {{ $value | humanizePercentage }} of quota for {{ $labels.quota_type }}"
+
+    - alert: TenantHierarchyDepthExceeded
+      expr: tenant_hierarchy_depth{service="tenant-service"} > 5
+      for: 1m
+      labels:
+        severity: critical
+        service: tenant-service
+      annotations:
+        summary: "Tenant hierarchy depth exceeded"
+        description: "Tenant hierarchy depth of {{ $value }} exceeds maximum allowed depth"
+
+    - alert: TenantIsolationViolation
+      expr: increase(tenant_isolation_violations_total{service="tenant-service"}[5m]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: tenant-service
+      annotations:
+        summary: "Tenant isolation violation detected"
+        description: "{{ $value }} tenant isolation violations detected in the last 5 minutes"
+
+    # Database connectivity
+    - alert: TenantServiceDatabaseConnectionFailure
+      expr: increase(database_connection_errors_total{service="tenant-service"}[5m]) > 5
+      for: 2m
+      labels:
+        severity: critical
+        service: tenant-service
+      annotations:
+        summary: "Database connection failures in tenant service"
+        description: "{{ $value }} database connection failures in the last 5 minutes"

@@ -1,0 +1,48 @@
+[package]
+name = "sparc-video-processor"
+version = "1.0.0"
+authors = ["SPARC Team"]
+edition = "2021"
+description = "High-performance WebAssembly video processing for SPARC"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2.89"
+web-sys = { version = "0.3.66", features = [
+    "Window",
+    "Performance",
+    "VideoFrame",
+    "VideoEncoder",
+    "VideoDecoder",
+    "VideoEncoderConfig",
+    "VideoDecoderConfig",
+    "EncodedVideoChunk",
+    "VideoColorSpace",
+    "console"
+] }
+js-sys = "0.3.66"
+console_error_panic_hook = "0.1.7"
+wee_alloc = { version = "0.4.5", optional = true }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.39"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release.package."*"]
+opt-level = 3
+
+[features]
+default = ["console_error_panic_hook"]
+wee_alloc = ["dep:wee_alloc"]
+
+[package.metadata.wasm-pack]
+"wasm-opt" = ["-O4", "--enable-simd"]

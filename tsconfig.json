@@ -1,0 +1,91 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "packages/**/*",
+    "services/**/*",
+    "web/**/*",
+    "infra/**/*",
+    "scripts/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/node_modules",
+    "**/dist",
+    "**/build",
+    "**/.next",
+    "**/coverage",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx"
+  ],
+  "references": [
+    {
+      "path": "./packages/shared"
+    },
+    {
+      "path": "./web"
+    },
+    {
+      "path": "./services/api-gateway"
+    },
+    {
+      "path": "./services/alert-service"
+    },
+    {
+      "path": "./services/auth-service"
+    },
+    {
+      "path": "./services/billing-service"
+    },
+    {
+      "path": "./services/chat-service"
+    },
+    {
+      "path": "./services/collaboration-service"
+    },
+    {
+      "path": "./services/data-service"
+    },
+    {
+      "path": "./services/email-service"
+    },
+    {
+      "path": "./services/file-service"
+    },
+    {
+      "path": "./services/integration-service"
+    },
+    {
+      "path": "./services/notification-service"
+    },
+    {
+      "path": "./services/project-service"
+    },
+    {
+      "path": "./services/reporting-service"
+    },
+    {
+      "path": "./services/search-service"
+    },
+    {
+      "path": "./services/task-service"
+    },
+    {
+      "path": "./services/time-tracking-service"
+    },
+    {
+      "path": "./services/user-service"
+    },
+    {
+      "path": "./services/workflow-service"
+    }
+  ],
+  "ts-node": {
+    "esm": true,
+    "experimentalSpecifierResolution": "node"
+  }
+}

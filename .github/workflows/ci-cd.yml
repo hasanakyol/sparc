@@ -1,0 +1,831 @@
+name: SPARC Platform CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip test execution'
+        required: false
+        default: false
+        type: boolean
+      force_deploy:
+        description: 'Force deployment even if tests fail'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-west-2.amazonaws.com
+  NODE_VERSION: '18'
+  DOCKER_BUILDKIT: 1
+
+jobs:
+  # ============================================================================
+  # CODE QUALITY AND VALIDATION STAGE
+  # ============================================================================
+  
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.key }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Generate cache key
+        id: cache-key
+        run: echo "key=deps-${{ hashFiles('**/package-lock.json') }}" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          npm ci --prefer-offline --no-audit
+          npm run postinstall || true
+
+      - name: Lint code
+        run: |
+          npm run lint
+          npm run lint:fix || true
+
+      - name: Type checking
+        run: npm run type-check
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Security audit
+        run: |
+          npm audit --audit-level=moderate --json > security-audit.json || true
+          npm run security:check || true
+
+      - name: Upload security audit
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-audit
+          path: security-audit.json
+          retention-days: 30
+
+  # ============================================================================
+  # UNIT AND INTEGRATION TESTS STAGE
+  # ============================================================================
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: code-quality
+    strategy:
+      matrix:
+        service:
+          - auth-service
+          - access-control-service
+          - video-management-service
+          - analytics-service
+          - device-management-service
+          - environmental-service
+          - event-processing-service
+          - mobile-credential-service
+          - reporting-service
+          - tenant-service
+          - visitor-management-service
+          - api-gateway
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Setup test database
+        run: |
+          docker run -d --name postgres-test \
+            -e POSTGRES_PASSWORD=test \
+            -e POSTGRES_USER=test \
+            -e POSTGRES_DB=sparc_test \
+            -p 5432:5432 postgres:15
+          docker run -d --name redis-test \
+            -p 6379:6379 redis:7-alpine
+          sleep 10
+
+      - name: Run database migrations
+        run: npm run db:migrate:test
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/sparc_test
+
+      - name: Run unit tests for ${{ matrix.service }}
+        run: npm run test:unit:${{ matrix.service }}
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://test:test@localhost:5432/sparc_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results-${{ matrix.service }}
+          path: |
+            coverage/
+            test-results/
+          retention-days: 30
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: code-quality
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_USER: test
+          POSTGRES_DB: sparc_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run database migrations
+        run: npm run db:migrate:test
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/sparc_test
+
+      - name: Seed test data
+        run: npm run db:seed:test
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/sparc_test
+
+      - name: Run integration tests
+        run: npm run test:integration:full
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://test:test@localhost:5432/sparc_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: |
+            test-results/integration/
+            coverage/integration/
+          retention-days: 30
+
+  # ============================================================================
+  # SECURITY SCANNING STAGE
+  # ============================================================================
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: code-quality
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run security tests
+        run: |
+          npm run test:security:penetration
+          npm run test:security:authentication
+          npm run test:security:authorization
+          npm run test:security:encryption
+        env:
+          NODE_ENV: test
+
+      - name: Container security scan
+        run: |
+          # Install Trivy
+          sudo apt-get update
+          sudo apt-get install wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy
+
+          # Scan Dockerfiles
+          find . -name "Dockerfile" -exec trivy config {} \; > trivy-config-scan.txt
+
+      - name: SAST with CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: Upload security scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-scan-results
+          path: |
+            trivy-config-scan.txt
+            test-results/security/
+          retention-days: 30
+
+  # ============================================================================
+  # PERFORMANCE TESTING STAGE
+  # ============================================================================
+
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [unit-tests, integration-tests]
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'performance-test')
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_USER: test
+          POSTGRES_DB: sparc_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Setup test environment
+        run: |
+          npm run db:migrate:test
+          npm run db:seed:test
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/sparc_test
+
+      - name: Run scalability validation
+        run: npm run test:performance:scalability
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://test:test@localhost:5432/sparc_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: Run load tests
+        run: |
+          npm run test:load:access-control-load
+          npm run test:load:video-streaming-load
+          npm run test:load:database-performance
+          npm run test:load:real-time-events
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://test:test@localhost:5432/sparc_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: Upload performance test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-test-results
+          path: |
+            test-results/performance/
+            performance-reports/
+          retention-days: 30
+
+  # ============================================================================
+  # COMPREHENSIVE VALIDATION STAGE
+  # ============================================================================
+
+  comprehensive-validation:
+    name: Comprehensive Validation Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [unit-tests, integration-tests, security-scan]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_USER: test
+          POSTGRES_DB: sparc_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run comprehensive validation suite
+        run: |
+          chmod +x scripts/validate-unified.sh
+          ./scripts/validate-unified.sh production all
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://test:test@localhost:5432/sparc_test
+          REDIS_URL: redis://localhost:6379
+
+      - name: Upload validation reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-reports
+          path: validation-reports/
+          retention-days: 90
+
+  # ============================================================================
+  # DOCKER BUILD AND PUSH STAGE
+  # ============================================================================
+
+  build-and-push:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [unit-tests, integration-tests, security-scan]
+    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
+    strategy:
+      matrix:
+        service:
+          - auth-service
+          - alert-service
+          - integration-service
+          - access-control-service
+          - video-management-service
+          - analytics-service
+          - device-management-service
+          - environmental-service
+          - event-processing-service
+          - mobile-credential-service
+          - reporting-service
+          - tenant-service
+          - visitor-management-service
+          - backup-recovery-service
+          - security-compliance-service
+          - maintenance-service
+          - elevator-control-service
+          - api-documentation-service
+          - testing-infrastructure-service
+          - api-gateway
+          - web
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/sparc-${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create ECR repository if not exists
+        run: |
+          aws ecr describe-repositories --repository-names sparc-${{ matrix.service }} --region ${{ env.AWS_REGION }} || \
+          aws ecr create-repository --repository-name sparc-${{ matrix.service }} --region ${{ env.AWS_REGION }}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service == 'web' && './web' || format('./services/{0}', matrix.service) }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            NODE_ENV=production
+
+      - name: Scan Docker image for vulnerabilities
+        run: |
+          # Install Trivy
+          sudo apt-get update
+          sudo apt-get install wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy
+
+          # Scan the built image
+          trivy image --format json --output trivy-${{ matrix.service }}.json ${{ env.ECR_REGISTRY }}/sparc-${{ matrix.service }}:${{ github.sha }}
+
+      - name: Upload vulnerability scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vulnerability-scan-${{ matrix.service }}
+          path: trivy-${{ matrix.service }}.json
+          retention-days: 30
+
+  # ============================================================================
+  # STAGING DEPLOYMENT STAGE
+  # ============================================================================
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [build-and-push, comprehensive-validation]
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment:
+      name: staging
+      url: https://staging.sparc.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name sparc-staging --region ${{ env.AWS_REGION }}
+
+      - name: Deploy to staging
+        run: |
+          chmod +x scripts/deploy-unified.sh
+          ./scripts/deploy-unified.sh staging \
+            --version ${{ github.sha }} \
+            --cluster sparc-staging \
+            --region ${{ env.AWS_REGION }}
+        env:
+          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
+
+      - name: Run smoke tests
+        run: |
+          sleep 60  # Wait for deployment to stabilize
+          npm ci --prefer-offline --no-audit
+          npm run test:smoke:staging
+        env:
+          STAGING_URL: https://staging.sparc.example.com
+
+      - name: Notify deployment status
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+
+  # ============================================================================
+  # PRODUCTION DEPLOYMENT STAGE
+  # ============================================================================
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [build-and-push, comprehensive-validation]
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://sparc.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name sparc-production --region ${{ env.AWS_REGION }}
+
+      - name: Create database backup
+        run: |
+          BACKUP_NAME="sparc-backup-$(date +%Y%m%d-%H%M%S)"
+          aws rds create-db-snapshot \
+            --db-instance-identifier sparc-production \
+            --db-snapshot-identifier $BACKUP_NAME \
+            --region ${{ env.AWS_REGION }}
+          echo "BACKUP_NAME=$BACKUP_NAME" >> $GITHUB_ENV
+
+      - name: Blue-Green Deployment
+        run: |
+          chmod +x scripts/deploy-unified.sh
+          ./scripts/deploy-unified.sh production \
+            --version ${{ github.sha }} \
+            --cluster sparc-production \
+            --region ${{ env.AWS_REGION }} \
+            --blue-green
+        env:
+          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
+
+      - name: Health checks and validation
+        run: |
+          sleep 120  # Wait for deployment to stabilize
+          npm ci --prefer-offline --no-audit
+          
+          # Run production health checks
+          npm run test:health:production
+          
+          # Run critical path tests
+          npm run test:critical-path:production
+        env:
+          PRODUCTION_URL: https://sparc.example.com
+
+      - name: Switch traffic to new deployment
+        run: |
+          # Update ingress to point to new deployment
+          kubectl patch ingress sparc-ingress -n sparc \
+            --type='json' \
+            -p='[{"op": "replace", "path": "/spec/rules/0/http/paths/0/backend/service/name", "value": "api-gateway-green"}]'
+
+      - name: Monitor deployment
+        run: |
+          # Monitor for 10 minutes
+          for i in {1..20}; do
+            if npm run test:health:production; then
+              echo "Health check $i/20 passed"
+            else
+              echo "Health check $i/20 failed - initiating rollback"
+              kubectl patch ingress sparc-ingress -n sparc \
+                --type='json' \
+                -p='[{"op": "replace", "path": "/spec/rules/0/http/paths/0/backend/service/name", "value": "api-gateway-blue"}]'
+              exit 1
+            fi
+            sleep 30
+          done
+
+      - name: Cleanup old deployment
+        if: success()
+        run: |
+          # Remove blue deployment after successful green deployment
+          kubectl delete deployment -l version=blue -n sparc
+
+      - name: Notify deployment status
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+
+  # ============================================================================
+  # ROLLBACK CAPABILITY
+  # ============================================================================
+
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: failure() && (needs.deploy-staging.result == 'failure' || needs.deploy-production.result == 'failure')
+    needs: [deploy-staging, deploy-production]
+    environment:
+      name: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          CLUSTER_NAME="sparc-${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}"
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
+
+      - name: Rollback deployment
+        run: |
+          # Rollback all service deployments
+          SERVICES=(
+            "auth-service" "access-control-service" "video-management-service"
+            "analytics-service" "device-management-service" "environmental-service"
+            "event-processing-service" "mobile-credential-service" "reporting-service"
+            "tenant-service" "visitor-management-service" "api-gateway"
+          )
+          
+          for service in "${SERVICES[@]}"; do
+            echo "Rolling back $service..."
+            kubectl rollout undo deployment/$service -n sparc
+            kubectl rollout status deployment/$service -n sparc --timeout=300s
+          done
+
+      - name: Verify rollback
+        run: |
+          sleep 60
+          npm ci --prefer-offline --no-audit
+          npm run test:health:${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
+
+      - name: Notify rollback
+        uses: 8398a7/action-slack@v3
+        with:
+          status: 'warning'
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          text: |
+            🔄 ROLLBACK COMPLETED
+            Environment: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
+            Commit: ${{ github.sha }}
+            Reason: Deployment failure detected
+
+  # ============================================================================
+  # CLEANUP AND REPORTING
+  # ============================================================================
+
+  cleanup-and-report:
+    name: Cleanup and Generate Reports
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: always()
+    needs: [code-quality, unit-tests, integration-tests, security-scan, performance-tests, comprehensive-validation, build-and-push, deploy-staging, deploy-production]
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Generate pipeline report
+        run: |
+          cat > pipeline-report.json << EOF
+          {
+            "pipelineId": "${{ github.run_id }}",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "results": {
+              "codeQuality": "${{ needs.code-quality.result }}",
+              "unitTests": "${{ needs.unit-tests.result }}",
+              "integrationTests": "${{ needs.integration-tests.result }}",
+              "securityScan": "${{ needs.security-scan.result }}",
+              "performanceTests": "${{ needs.performance-tests.result }}",
+              "comprehensiveValidation": "${{ needs.comprehensive-validation.result }}",
+              "buildAndPush": "${{ needs.build-and-push.result }}",
+              "deployStaging": "${{ needs.deploy-staging.result }}",
+              "deployProduction": "${{ needs.deploy-production.result }}"
+            }
+          }
+          EOF
+
+      - name: Upload pipeline report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-report
+          path: pipeline-report.json
+          retention-days: 90
+
+      - name: Cleanup old artifacts
+        run: |
+          # This would typically be handled by a separate cleanup job
+          echo "Cleanup completed"
+
+      - name: Final notification
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#ci-cd'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          text: |
+            🏁 SPARC Platform CI/CD Pipeline Completed
+            Status: ${{ job.status }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Pipeline ID: ${{ github.run_id }}
+            Duration: ${{ github.event.head_commit.timestamp }}

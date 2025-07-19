@@ -1,0 +1,125 @@
+# OWASP ZAP Custom Rules Configuration
+# Format: IGNORE/WARN/FAIL<tab>Rule ID<tab>Description
+# 
+# This file configures which ZAP rules to ignore, warn, or fail on
+
+# Ignore false positives
+IGNORE	10015	Incomplete or No Cache-control Header Set (for API endpoints)
+IGNORE	10027	Suspicious Comments (development comments in test env)
+IGNORE	10096	Timestamp Disclosure (expected in API responses)
+
+# Warn on medium severity issues
+WARN	10016	Web Browser XSS Protection Not Enabled
+WARN	10017	Cross-Domain JavaScript Source File Inclusion
+WARN	10019	Content-Type Header Missing
+WARN	10020	X-Frame-Options Header Not Set
+WARN	10021	X-Content-Type-Options Header Missing
+WARN	10023	XML External Entity Attack
+WARN	10024	Buffer Overflow
+WARN	10025	Proxy Disclosure
+WARN	10026	HTTP Parameter Override
+WARN	10028	Open Redirect
+WARN	10029	Cookie Poisoning
+WARN	10030	User Controllable Charset
+WARN	10031	User Controllable HTML Element Attribute
+WARN	10032	Viewstate without MAC Signature
+WARN	10033	Directory Browsing
+WARN	10034	Heartbleed OpenSSL Vulnerability
+WARN	10035	Strict-Transport-Security Header Not Set
+WARN	10036	Server Leaks Version Information
+WARN	10037	Server Leaks Information
+WARN	10038	Content Security Policy Header Not Set
+WARN	10039	X-Backend-Server Header Information Leak
+WARN	10040	Secure Pages Include Mixed Content
+WARN	10041	HTTP to HTTPS Insecure Transition
+WARN	10042	HTTPS to HTTP Insecure Transition
+WARN	10043	User Controllable JavaScript Event
+WARN	10044	Big Redirect Detected
+WARN	10045	Source Code Disclosure
+WARN	10050	Retrieved from Cache
+WARN	10052	X-ChromeLogger-Data Header Information Leak
+WARN	10053	Apache Range Header DoS
+WARN	10054	Cookie without SameSite Attribute
+WARN	10055	Content Security Policy Scanner
+WARN	10056	X-Debug-Token Information Leak
+WARN	10057	Username Hash Found
+WARN	10058	GET for POST
+WARN	10061	X-AspNet-Version Response Header Scanner
+WARN	10062	PII Disclosure
+WARN	10063	Feature Policy Header Not Set
+WARN	10070	Use of SAML
+WARN	10094	Base64 Disclosure
+WARN	10095	Backup File Disclosure
+WARN	10097	Hash Disclosure
+WARN	10098	Cross-Domain Misconfiguration
+WARN	10099	Source Code Disclosure
+
+# Fail on high severity issues
+FAIL	0	Directory Browsing
+FAIL	2	Private IP Disclosure
+FAIL	3	Session ID in URL Rewrite
+FAIL	6	Path Traversal
+FAIL	7	Remote File Include
+FAIL	10010	Cookie No HttpOnly Flag
+FAIL	10011	Cookie Without Secure Flag
+FAIL	10012	Password Autocomplete in Browser
+FAIL	10013	Weak HTTP Authentication
+FAIL	10014	Cross Site Request Forgery
+FAIL	10018	SQL Injection
+FAIL	10045	Source Code Disclosure - /WEB-INF folder
+FAIL	10047	HTTPS Content Available via HTTP
+FAIL	10048	Remote Code Execution
+FAIL	10051	Relative Path Confusion
+FAIL	10058	GET for POST
+FAIL	10095	Backup File Disclosure
+FAIL	10202	Absence of Anti-CSRF Tokens
+FAIL	20012	Anti-CSRF Tokens Check
+FAIL	20014	HTTP Parameter Pollution
+FAIL	20015	Heartbleed OpenSSL Vulnerability
+FAIL	20016	Cross-Domain Request Forgery
+FAIL	20017	Source Code Disclosure - CVE-2012-1823
+FAIL	20018	Remote Code Execution - CVE-2012-1823
+FAIL	20019	External Redirect
+FAIL	40003	CRLF Injection
+FAIL	40008	Parameter Tampering
+FAIL	40009	Server Side Include
+FAIL	40012	Cross Site Scripting (Reflected)
+FAIL	40013	Session Fixation
+FAIL	40014	Cross Site Scripting (Persistent)
+FAIL	40016	Cross Site Scripting (Persistent) - Prime
+FAIL	40017	Cross Site Scripting (Persistent) - Spider
+FAIL	40018	SQL Injection - Advanced
+FAIL	40019	SQL Injection - Boolean Based
+FAIL	40020	SQL Injection - Error Based
+FAIL	40021	SQL Injection - Time Based
+FAIL	40022	SQL Injection - SQLite
+FAIL	40023	XML External Entity Attack
+FAIL	40024	XML Injection
+FAIL	40025	Proxy Disclosure
+FAIL	40026	Cross Site Scripting (DOM Based)
+FAIL	40027	SQL Injection - MsSQL
+FAIL	40028	LDAP Injection
+FAIL	40029	XPath Injection
+FAIL	40030	XML Injection Active Scan Rule
+FAIL	40031	User Controllable HTML Element Attribute (Potential XSS)
+FAIL	40032	.htaccess Information Leak
+FAIL	40033	HTTP Verb Tampering
+FAIL	40034	.env Information Leak
+FAIL	40035	Hidden File Finder
+FAIL	90001	Insecure JSF ViewState
+FAIL	90011	Charset Mismatch
+FAIL	90018	SQL Injection - Advanced - Time Based
+FAIL	90019	Server Side Code Injection
+FAIL	90020	Remote OS Command Injection
+FAIL	90021	XPath Injection
+FAIL	90022	Application Error Disclosure
+FAIL	90023	XML External Entity Attack
+FAIL	90024	Generic Padding Oracle
+FAIL	90025	Expression Language Injection
+FAIL	90026	SOAP Action Spoofing
+FAIL	90027	Cookie Slack Detector
+FAIL	90028	Insecure HTTP Method
+FAIL	90029	SOAP XML Injection
+FAIL	90030	WSDL File Detection
+FAIL	90033	Loosely Scoped Cookie
+FAIL	90034	Cloud Metadata Attack

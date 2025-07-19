@@ -1,0 +1,594 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maintenance-service
+  namespace: sparc
+  labels:
+    app: maintenance-service
+    component: backend
+    tier: service
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: maintenance-service
+  template:
+    metadata:
+      labels:
+        app: maintenance-service
+        component: backend
+        tier: service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3009"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: maintenance-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+      - name: maintenance-service
+        image: sparc/maintenance-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3009
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3009"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: jwt-secret
+        - name: DEVICE_MANAGEMENT_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: device-management-service-url
+        - name: ALERT_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: alert-service-url
+        - name: NOTIFICATION_EMAIL_HOST
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: notification-email-host
+        - name: NOTIFICATION_EMAIL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: notification-email-port
+        - name: NOTIFICATION_EMAIL_USER
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: notification-email-user
+        - name: NOTIFICATION_EMAIL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: notification-email-password
+        - name: NOTIFICATION_SMS_ACCOUNT_SID
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: notification-sms-account-sid
+        - name: NOTIFICATION_SMS_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: notification-sms-auth-token
+        - name: NOTIFICATION_SMS_FROM_NUMBER
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: notification-sms-from-number
+        - name: CORS_ORIGIN
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: cors-origin
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: log-level
+        - name: RATE_LIMIT_WINDOW_MS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: rate-limit-window-ms
+        - name: RATE_LIMIT_MAX_REQUESTS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: rate-limit-max-requests
+        - name: MAINTENANCE_SCHEDULE_INTERVAL_HOURS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: maintenance-schedule-interval-hours
+        - name: WORK_ORDER_AUTO_ASSIGNMENT_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: work-order-auto-assignment-enabled
+        - name: PREVENTIVE_MAINTENANCE_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: preventive-maintenance-enabled
+        - name: REMOTE_DIAGNOSTICS_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: remote-diagnostics-enabled
+        - name: PARTS_INVENTORY_TRACKING_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: parts-inventory-tracking-enabled
+        - name: TECHNICIAN_PORTAL_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: technician-portal-enabled
+        - name: MAINTENANCE_ANALYTICS_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: maintenance-analytics-enabled
+        - name: WORK_ORDER_SLA_HOURS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: work-order-sla-hours
+        - name: CRITICAL_WORK_ORDER_SLA_HOURS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: critical-work-order-sla-hours
+        - name: DEVICE_HEALTH_CHECK_INTERVAL_MINUTES
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: device-health-check-interval-minutes
+        - name: MAINTENANCE_REPORT_SCHEDULE
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: maintenance-report-schedule
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 30
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: logs
+          mountPath: /app/logs
+        - name: maintenance-reports
+          mountPath: /app/reports
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+      - name: maintenance-reports
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - maintenance-service
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+      - key: "sparc.io/maintenance-service"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: maintenance-service
+  namespace: sparc
+  labels:
+    app: maintenance-service
+    component: backend
+    tier: service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: maintenance-service
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: maintenance-service
+  namespace: sparc
+  labels:
+    app: maintenance-service
+    component: backend
+    tier: service
+automountServiceAccountToken: false
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: maintenance-service-hpa
+  namespace: sparc
+  labels:
+    app: maintenance-service
+    component: backend
+    tier: service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: maintenance-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: maintenance-service-pdb
+  namespace: sparc
+  labels:
+    app: maintenance-service
+    component: backend
+    tier: service
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: maintenance-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: maintenance-service-netpol
+  namespace: sparc
+  labels:
+    app: maintenance-service
+    component: backend
+    tier: service
+spec:
+  podSelector:
+    matchLabels:
+      app: maintenance-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          app: nginx-ingress
+    - podSelector:
+        matchLabels:
+          app: device-management-service
+    - podSelector:
+        matchLabels:
+          app: alert-service
+    ports:
+    - protocol: TCP
+      port: 3009
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: device-management-service
+    ports:
+    - protocol: TCP
+      port: 80
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: alert-service
+    ports:
+    - protocol: TCP
+      port: 80
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 587
+    - protocol: TCP
+      port: 465
+    - protocol: TCP
+      port: 25
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: maintenance-service-monitor
+  namespace: sparc
+  labels:
+    app: maintenance-service
+    component: backend
+    tier: service
+spec:
+  selector:
+    matchLabels:
+      app: maintenance-service
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: maintenance-service-alerts
+  namespace: sparc
+  labels:
+    app: maintenance-service
+    component: backend
+    tier: service
+spec:
+  groups:
+  - name: maintenance-service.rules
+    rules:
+    - alert: MaintenanceServiceDown
+      expr: up{job="maintenance-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: maintenance-service
+      annotations:
+        summary: "Maintenance Service is down"
+        description: "Maintenance Service has been down for more than 1 minute"
+    - alert: MaintenanceServiceHighErrorRate
+      expr: rate(http_requests_total{job="maintenance-service",status=~"5.."}[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        service: maintenance-service
+      annotations:
+        summary: "High error rate in Maintenance Service"
+        description: "Maintenance Service error rate is {{ $value }} errors per second"
+    - alert: MaintenanceServiceHighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="maintenance-service"}[5m])) > 2
+      for: 5m
+      labels:
+        severity: warning
+        service: maintenance-service
+      annotations:
+        summary: "High latency in Maintenance Service"
+        description: "95th percentile latency is {{ $value }}s"
+    - alert: MaintenanceServiceHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"maintenance-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: maintenance-service
+      annotations:
+        summary: "High memory usage in Maintenance Service"
+        description: "Memory usage is {{ $value | humanizePercentage }}"
+    - alert: MaintenanceServiceHighCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{pod=~"maintenance-service-.*"}[5m]) / container_spec_cpu_quota * 100 > 90
+      for: 5m
+      labels:
+        severity: warning
+        service: maintenance-service
+      annotations:
+        summary: "High CPU usage in Maintenance Service"
+        description: "CPU usage is {{ $value }}%"
+    - alert: MaintenanceWorkOrderSLABreach
+      expr: maintenance_work_order_sla_breach_total > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: maintenance-service
+      annotations:
+        summary: "Work order SLA breach detected"
+        description: "{{ $value }} work orders have breached SLA"
+    - alert: MaintenanceDeviceHealthCheckFailed
+      expr: maintenance_device_health_check_failed_total > 5
+      for: 5m
+      labels:
+        severity: warning
+        service: maintenance-service
+      annotations:
+        summary: "Multiple device health checks failed"
+        description: "{{ $value }} device health checks have failed"
+    - alert: MaintenancePreventiveMaintenanceOverdue
+      expr: maintenance_preventive_maintenance_overdue_total > 0
+      for: 1h
+      labels:
+        severity: warning
+        service: maintenance-service
+      annotations:
+        summary: "Preventive maintenance overdue"
+        description: "{{ $value }} preventive maintenance tasks are overdue"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maintenance-service-config
+  namespace: sparc
+  labels:
+    app: maintenance-service
+    component: config
+data:
+  device-management-service-url: "http://device-management-service.sparc.svc.cluster.local"
+  alert-service-url: "http://alert-service.sparc.svc.cluster.local"
+  notification-email-port: "587"
+  notification-sms-from-number: "+1234567890"
+  maintenance-schedule-interval-hours: "24"
+  work-order-auto-assignment-enabled: "true"
+  preventive-maintenance-enabled: "true"
+  remote-diagnostics-enabled: "true"
+  parts-inventory-tracking-enabled: "true"
+  technician-portal-enabled: "true"
+  maintenance-analytics-enabled: "true"
+  work-order-sla-hours: "24"
+  critical-work-order-sla-hours: "4"
+  device-health-check-interval-minutes: "15"
+  maintenance-report-schedule: "0 6 * * *"

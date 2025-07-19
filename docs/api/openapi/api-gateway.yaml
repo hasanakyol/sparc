@@ -1,0 +1,627 @@
+openapi: 3.0.3
+info:
+  title: SPARC API Gateway
+  description: |
+    The SPARC API Gateway serves as the central entry point for all client requests to the SPARC security platform.
+    It handles authentication, authorization, rate limiting, and request routing to appropriate microservices.
+    
+    ## Authentication
+    
+    The API uses JWT-based authentication. Include the JWT token in the Authorization header:
+    ```
+    Authorization: Bearer <your-jwt-token>
+    ```
+    
+    ## Rate Limiting
+    
+    API rate limits are enforced per tenant:
+    - Standard tier: 1000 requests/minute
+    - Premium tier: 5000 requests/minute
+    - Enterprise tier: 10000 requests/minute
+    
+    ## Error Handling
+    
+    The API uses standard HTTP status codes and returns error responses in the following format:
+    ```json
+    {
+      "error": {
+        "code": "ERROR_CODE",
+        "message": "Human-readable error message",
+        "details": {}
+      }
+    }
+    ```
+  version: 1.0.0
+  contact:
+    name: SPARC Support
+    email: support@sparc.security
+    url: https://sparc.security/support
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.sparc.security/v1
+    description: Production API
+  - url: https://staging-api.sparc.security/v1
+    description: Staging API
+  - url: http://localhost:3000/v1
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Health
+    description: Service health and status endpoints
+  - name: Proxy
+    description: Service proxy endpoints
+  - name: WebSocket
+    description: Real-time WebSocket connections
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Get API Gateway health status
+      description: Returns the health status of the API Gateway and its dependencies
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: healthy
+                timestamp: "2024-01-18T10:30:00Z"
+                version: "1.0.0"
+                checks:
+                  database: healthy
+                  redis: healthy
+                  auth_service: healthy
+                  services_reachable: 18
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: unhealthy
+                timestamp: "2024-01-18T10:30:00Z"
+                version: "1.0.0"
+                checks:
+                  database: healthy
+                  redis: unhealthy
+                  auth_service: healthy
+                  services_reachable: 17
+                error: "Redis connection failed"
+
+  /health/live:
+    get:
+      tags:
+        - Health
+      summary: Kubernetes liveness probe
+      description: Simple liveness check for Kubernetes
+      operationId: getLiveness
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '503':
+          description: Service is not alive
+
+  /health/ready:
+    get:
+      tags:
+        - Health
+      summary: Kubernetes readiness probe
+      description: Checks if the service is ready to accept traffic
+      operationId: getReadiness
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+                  services:
+                    type: object
+                    additionalProperties:
+                      type: string
+                      enum: [healthy, unhealthy]
+        '503':
+          description: Service is not ready
+
+  /api/{service}/*:
+    parameters:
+      - in: path
+        name: service
+        required: true
+        schema:
+          type: string
+          enum:
+            - auth
+            - tenant
+            - video
+            - access-control
+            - analytics
+            - alert
+            - device
+            - environmental
+            - event
+            - mobile-credential
+            - reporting
+            - visitor
+            - security-monitoring
+        description: Target microservice
+    
+    get:
+      tags:
+        - Proxy
+      summary: Proxy GET request to service
+      description: Forwards GET requests to the specified microservice
+      operationId: proxyGet
+      parameters:
+        - in: header
+          name: X-Tenant-ID
+          schema:
+            type: string
+            format: uuid
+          description: Tenant ID for multi-tenant isolation
+        - in: header
+          name: X-Request-ID
+          schema:
+            type: string
+            format: uuid
+          description: Request ID for tracing
+      responses:
+        '200':
+          description: Successful response from service
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '502':
+          $ref: '#/components/responses/BadGatewayError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableError'
+
+    post:
+      tags:
+        - Proxy
+      summary: Proxy POST request to service
+      description: Forwards POST requests to the specified microservice
+      operationId: proxyPost
+      parameters:
+        - in: header
+          name: X-Tenant-ID
+          schema:
+            type: string
+            format: uuid
+          description: Tenant ID for multi-tenant isolation
+        - in: header
+          name: X-Request-ID
+          schema:
+            type: string
+            format: uuid
+          description: Request ID for tracing
+      requestBody:
+        description: Request body to forward
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Successful response from service
+        '201':
+          description: Resource created successfully
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '502':
+          $ref: '#/components/responses/BadGatewayError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableError'
+
+    put:
+      tags:
+        - Proxy
+      summary: Proxy PUT request to service
+      description: Forwards PUT requests to the specified microservice
+      operationId: proxyPut
+      parameters:
+        - in: header
+          name: X-Tenant-ID
+          schema:
+            type: string
+            format: uuid
+          description: Tenant ID for multi-tenant isolation
+        - in: header
+          name: X-Request-ID
+          schema:
+            type: string
+            format: uuid
+          description: Request ID for tracing
+      requestBody:
+        description: Request body to forward
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Resource updated successfully
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '502':
+          $ref: '#/components/responses/BadGatewayError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableError'
+
+    patch:
+      tags:
+        - Proxy
+      summary: Proxy PATCH request to service
+      description: Forwards PATCH requests to the specified microservice
+      operationId: proxyPatch
+      parameters:
+        - in: header
+          name: X-Tenant-ID
+          schema:
+            type: string
+            format: uuid
+          description: Tenant ID for multi-tenant isolation
+        - in: header
+          name: X-Request-ID
+          schema:
+            type: string
+            format: uuid
+          description: Request ID for tracing
+      requestBody:
+        description: Request body to forward
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Resource patched successfully
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '502':
+          $ref: '#/components/responses/BadGatewayError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableError'
+
+    delete:
+      tags:
+        - Proxy
+      summary: Proxy DELETE request to service
+      description: Forwards DELETE requests to the specified microservice
+      operationId: proxyDelete
+      parameters:
+        - in: header
+          name: X-Tenant-ID
+          schema:
+            type: string
+            format: uuid
+          description: Tenant ID for multi-tenant isolation
+        - in: header
+          name: X-Request-ID
+          schema:
+            type: string
+            format: uuid
+          description: Request ID for tracing
+      responses:
+        '204':
+          description: Resource deleted successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '502':
+          $ref: '#/components/responses/BadGatewayError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableError'
+
+  /ws:
+    get:
+      tags:
+        - WebSocket
+      summary: Establish WebSocket connection
+      description: |
+        Establishes a WebSocket connection for real-time updates.
+        
+        ## Connection URL
+        ```
+        wss://api.sparc.security/v1/ws?token=<jwt-token>
+        ```
+        
+        ## Message Format
+        ```json
+        {
+          "type": "subscribe",
+          "channel": "alerts",
+          "filters": {
+            "severity": ["high", "critical"],
+            "siteId": "123e4567-e89b-12d3-a456-426614174000"
+          }
+        }
+        ```
+        
+        ## Available Channels
+        - `alerts`: Real-time security alerts
+        - `events`: Access control events
+        - `video`: Video stream updates
+        - `analytics`: Analytics updates
+        - `system`: System notifications
+      operationId: websocketConnect
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema:
+            type: string
+          description: JWT authentication token
+      responses:
+        '101':
+          description: Switching Protocols - WebSocket connection established
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from the authentication service
+
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - version
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+          description: Overall health status
+        timestamp:
+          type: string
+          format: date-time
+          description: Health check timestamp
+        version:
+          type: string
+          description: Service version
+        checks:
+          type: object
+          description: Individual health check results
+          properties:
+            database:
+              type: string
+              enum: [healthy, unhealthy]
+            redis:
+              type: string
+              enum: [healthy, unhealthy]
+            auth_service:
+              type: string
+              enum: [healthy, unhealthy]
+            services_reachable:
+              type: integer
+              description: Number of reachable microservices
+        error:
+          type: string
+          description: Error message if unhealthy
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: Error code
+            message:
+              type: string
+              description: Human-readable error message
+            details:
+              type: object
+              description: Additional error details
+            request_id:
+              type: string
+              format: uuid
+              description: Request ID for tracing
+
+    RateLimitError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            error:
+              type: object
+              properties:
+                retry_after:
+                  type: integer
+                  description: Seconds until rate limit resets
+                limit:
+                  type: integer
+                  description: Rate limit threshold
+                remaining:
+                  type: integer
+                  description: Remaining requests in current window
+
+  responses:
+    BadRequestError:
+      description: Bad request - Invalid input data
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: INVALID_REQUEST
+              message: Invalid request parameters
+              details:
+                field: email
+                reason: Invalid email format
+
+    UnauthorizedError:
+      description: Unauthorized - Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: UNAUTHORIZED
+              message: Authentication required
+
+    ForbiddenError:
+      description: Forbidden - Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: FORBIDDEN
+              message: Insufficient permissions to access this resource
+
+    NotFoundError:
+      description: Not found - Resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: NOT_FOUND
+              message: Resource not found
+
+    RateLimitError:
+      description: Too many requests - Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RateLimitError'
+          example:
+            error:
+              code: RATE_LIMIT_EXCEEDED
+              message: Rate limit exceeded
+              retry_after: 60
+              limit: 1000
+              remaining: 0
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: INTERNAL_ERROR
+              message: An unexpected error occurred
+              request_id: 123e4567-e89b-12d3-a456-426614174000
+
+    BadGatewayError:
+      description: Bad gateway - Upstream service error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: BAD_GATEWAY
+              message: Upstream service error
+              details:
+                service: auth-service
+                status: 500
+
+    ServiceUnavailableError:
+      description: Service unavailable - Service temporarily offline
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: SERVICE_UNAVAILABLE
+              message: Service temporarily unavailable
+              details:
+                service: video-management-service
+                retry_after: 30

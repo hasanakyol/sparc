@@ -1,0 +1,134 @@
+# Linkerd Control Plane Configuration
+apiVersion: linkerd.io/v1alpha1
+kind: ControlPlane
+metadata:
+  name: linkerd-control-plane
+  namespace: linkerd
+spec:
+  # High Availability mode for production
+  controlPlaneConfig:
+    proxy:
+      resources:
+        cpu:
+          request: 100m
+          limit: 1000m
+        memory:
+          request: 50Mi
+          limit: 250Mi
+    
+    # Destination service configuration
+    destination:
+      replicas: 3
+      resources:
+        cpu:
+          request: 100m
+          limit: 500m
+        memory:
+          request: 50Mi
+          limit: 300Mi
+    
+    # Identity service configuration  
+    identity:
+      replicas: 3
+      resources:
+        cpu:
+          request: 100m
+          limit: 500m
+        memory:
+          request: 50Mi
+          limit: 300Mi
+      
+      # mTLS certificate configuration
+      issuer:
+        scheme: linkerd.io/tls
+        clockSkewAllowance: 20s
+        issuanceLifetime: 24h
+    
+    # Proxy injector configuration
+    proxyInjector:
+      replicas: 3
+      resources:
+        cpu:
+          request: 100m
+          limit: 500m
+        memory:
+          request: 50Mi
+          limit: 300Mi
+    
+    # Web dashboard configuration
+    web:
+      replicas: 2
+      resources:
+        cpu:
+          request: 100m
+          limit: 500m
+        memory:
+          request: 50Mi
+          limit: 300Mi
+    
+    # Heartbeat configuration
+    heartbeat:
+      schedule: "0 0 * * *"
+  
+  # Global proxy configuration
+  proxy:
+    # Resource limits for data plane proxies
+    resources:
+      cpu:
+        request: 100m
+        limit: 1000m
+      memory:
+        request: 50Mi
+        limit: 250Mi
+    
+    # Proxy log level
+    logLevel: info
+    logFormat: json
+    
+    # Ports configuration
+    ports:
+      admin: 4191
+      control: 4190
+      inbound: 4143
+      outbound: 4140
+    
+    # UID to run the proxy as
+    uid: 2102
+    
+    # Wait for proxy to be ready before starting pod
+    waitBeforeExitSeconds: 0
+    
+    # Default inbound policy
+    defaultInboundPolicy: all-authenticated
+---
+# Linkerd Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: linkerd
+  labels:
+    linkerd.io/control-plane-ns: linkerd
+    config.linkerd.io/admission-webhooks: disabled
+  annotations:
+    linkerd.io/inject: disabled
+---
+# Linkerd Viz Extension for observability
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: linkerd-viz
+  labels:
+    linkerd.io/extension: viz
+  annotations:
+    linkerd.io/inject: enabled
+    config.linkerd.io/proxy-await: "enabled"
+---
+# Linkerd Multicluster Extension
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: linkerd-multicluster
+  labels:
+    linkerd.io/extension: multicluster
+  annotations:
+    linkerd.io/inject: enabled

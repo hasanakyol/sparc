@@ -1,0 +1,529 @@
+name: Deploy to AWS EKS
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      force_deploy:
+        description: 'Force deployment even if tests fail'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-west-2.amazonaws.com
+  EKS_CLUSTER_NAME_STAGING: sparc-staging
+  EKS_CLUSTER_NAME_PRODUCTION: sparc-production
+  SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+jobs:
+  check-ci-status:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
+    outputs:
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
+      environment: ${{ steps.check.outputs.environment }}
+    steps:
+      - name: Check CI status and determine environment
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "environment=production" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          else
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            echo "environment=none" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-push:
+    needs: check-ci-status
+    if: needs.check-ci-status.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - auth-service
+          - access-control-service
+          - video-management-service
+          - analytics-service
+          - device-management-service
+          - environmental-service
+          - event-processing-service
+          - mobile-credential-service
+          - reporting-service
+          - tenant-service
+          - visitor-management-service
+          - api-gateway
+          - alert-service
+          - integration-service
+          - backup-recovery-service
+          - security-compliance-service
+          - maintenance-service
+          - elevator-control-service
+          - api-documentation-service
+          - testing-infrastructure-service
+          - alert-service
+          - integration-service
+          - backup-recovery-service
+          - security-compliance-service
+          - maintenance-service
+          - elevator-control-service
+          - api-documentation-service
+          - testing-infrastructure-service
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/sparc-${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ needs.check-ci-status.outputs.environment }}-{{sha}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          file: ./services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.ECR_REGISTRY }}/sparc-${{ matrix.service }}:${{ needs.check-ci-status.outputs.environment }}-${{ github.sha }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service }}.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}.spdx.json
+
+  security-scan:
+    needs: [check-ci-status, build-and-push]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - auth-service
+          - access-control-service
+          - video-management-service
+          - analytics-service
+          - device-management-service
+          - environmental-service
+          - event-processing-service
+          - mobile-credential-service
+          - reporting-service
+          - tenant-service
+          - visitor-management-service
+          - api-gateway
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/sparc-${{ matrix.service }}:${{ needs.check-ci-status.outputs.environment }}-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.service }}.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results-${{ matrix.service }}.sarif'
+
+  deploy-staging:
+    needs: [check-ci-status, build-and-push, security-scan]
+    if: needs.check-ci-status.outputs.environment == 'staging'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME_STAGING }}
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
+
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace sparc-staging --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy secrets from AWS Secrets Manager
+        run: |
+          # Install External Secrets Operator if not present
+          helm repo add external-secrets https://charts.external-secrets.io
+          helm repo update
+          helm upgrade --install external-secrets external-secrets/external-secrets \
+            --namespace external-secrets-system \
+            --create-namespace \
+            --wait
+
+          # Apply SecretStore and ExternalSecret manifests
+          envsubst < k8s/environments/staging/secrets.yaml | kubectl apply -f -
+
+      - name: Run database migrations
+        run: |
+          # Create backup before migration
+          kubectl create job migration-backup-$(date +%s) \
+            --from=cronjob/database-backup \
+            --namespace=sparc-staging || true
+
+          # Wait for backup to complete
+          sleep 30
+
+          # Run migrations
+          kubectl apply -f k8s/environments/staging/migration-job.yaml
+          kubectl wait --for=condition=complete job/database-migration \
+            --namespace=sparc-staging --timeout=600s
+
+      - name: Deploy applications
+        run: |
+          # Update image tags in manifests
+          export IMAGE_TAG="${{ needs.check-ci-status.outputs.environment }}-${{ github.sha }}"
+          export ECR_REGISTRY="${{ env.ECR_REGISTRY }}"
+          
+          # Apply all service manifests
+          for service in auth-service access-control-service video-management-service analytics-service device-management-service environmental-service event-processing-service mobile-credential-service reporting-service tenant-service visitor-management-service api-gateway alert-service integration-service backup-recovery-service security-compliance-service maintenance-service elevator-control-service api-documentation-service testing-infrastructure-service; do
+            envsubst < k8s/${service}.yaml | kubectl apply -f -
+          done
+
+          # Apply environment-specific configurations
+          kubectl apply -k k8s/environments/staging/
+
+      - name: Wait for deployment rollout
+        run: |
+          services=(auth-service access-control-service video-management-service analytics-service device-management-service environmental-service event-processing-service mobile-credential-service reporting-service tenant-service visitor-management-service api-gateway alert-service integration-service backup-recovery-service security-compliance-service maintenance-service elevator-control-service api-documentation-service testing-infrastructure-service)
+          
+          for service in "${services[@]}"; do
+            echo "Waiting for $service deployment to complete..."
+            kubectl rollout status deployment/$service --namespace=sparc-staging --timeout=600s
+          done
+
+      - name: Run smoke tests
+        run: |
+          # Install test dependencies
+          kubectl apply -f k8s/environments/staging/smoke-tests.yaml
+          
+          # Wait for tests to complete
+          kubectl wait --for=condition=complete job/smoke-tests \
+            --namespace=sparc-staging --timeout=300s
+          
+          # Check test results
+          if kubectl logs job/smoke-tests --namespace=sparc-staging | grep -q "FAILED"; then
+            echo "Smoke tests failed"
+            exit 1
+          fi
+
+      - name: Update deployment status
+        run: |
+          kubectl annotate deployment --all \
+            deployment.kubernetes.io/revision-history="Deployed from commit ${{ github.sha }} at $(date)" \
+            --namespace=sparc-staging
+
+      - name: Notify deployment success
+        if: success()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"✅ SPARC staging deployment successful\nCommit: ${{ github.sha }}\nBranch: ${{ github.ref_name }}\nEnvironment: staging"}' \
+            ${{ env.SLACK_WEBHOOK }}
+
+      - name: Notify deployment failure
+        if: failure()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"❌ SPARC staging deployment failed\nCommit: ${{ github.sha }}\nBranch: ${{ github.ref_name }}\nEnvironment: staging\nCheck: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+            ${{ env.SLACK_WEBHOOK }}
+
+  approval-gate:
+    needs: [check-ci-status, deploy-staging]
+    if: needs.check-ci-status.outputs.environment == 'production'
+    runs-on: ubuntu-latest
+    environment: production-approval
+    steps:
+      - name: Manual approval required
+        run: |
+          echo "Manual approval required for production deployment"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+
+  deploy-production:
+    needs: [check-ci-status, build-and-push, security-scan, approval-gate]
+    if: needs.check-ci-status.outputs.environment == 'production' && (success() || github.event.inputs.force_deploy == 'true')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME_PRODUCTION }}
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
+
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace sparc-production --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create database backup
+        run: |
+          # Create pre-deployment backup
+          kubectl create job pre-deployment-backup-$(date +%s) \
+            --from=cronjob/database-backup \
+            --namespace=sparc-production
+          
+          # Wait for backup to complete
+          sleep 60
+
+      - name: Deploy secrets from AWS Secrets Manager
+        run: |
+          # Apply SecretStore and ExternalSecret manifests
+          envsubst < k8s/environments/production/secrets.yaml | kubectl apply -f -
+
+      - name: Run database migrations
+        run: |
+          # Run migrations with rollback capability
+          kubectl apply -f k8s/environments/production/migration-job.yaml
+          kubectl wait --for=condition=complete job/database-migration \
+            --namespace=sparc-production --timeout=600s
+
+      - name: Blue-Green Deployment - Prepare Green Environment
+        run: |
+          export IMAGE_TAG="${{ needs.check-ci-status.outputs.environment }}-${{ github.sha }}"
+          export ECR_REGISTRY="${{ env.ECR_REGISTRY }}"
+          export DEPLOYMENT_SUFFIX="-green"
+          
+          # Deploy green version of all services
+          for service in auth-service access-control-service video-management-service analytics-service device-management-service environmental-service event-processing-service mobile-credential-service reporting-service tenant-service visitor-management-service api-gateway alert-service integration-service backup-recovery-service security-compliance-service maintenance-service elevator-control-service api-documentation-service testing-infrastructure-service; do
+            # Create green deployment
+            envsubst < k8s/${service}.yaml | sed "s/${service}/${service}${DEPLOYMENT_SUFFIX}/g" | kubectl apply -f -
+          done
+
+      - name: Wait for Green Deployment
+        run: |
+          services=(auth-service access-control-service video-management-service analytics-service device-management-service environmental-service event-processing-service mobile-credential-service reporting-service tenant-service visitor-management-service api-gateway alert-service integration-service backup-recovery-service security-compliance-service maintenance-service elevator-control-service api-documentation-service testing-infrastructure-service)
+          
+          for service in "${services[@]}"; do
+            echo "Waiting for ${service}-green deployment to complete..."
+            kubectl rollout status deployment/${service}-green --namespace=sparc-production --timeout=600s
+          done
+
+      - name: Health Check Green Environment
+        run: |
+          # Run comprehensive health checks on green environment
+          kubectl apply -f k8s/environments/production/health-check-green.yaml
+          
+          # Wait for health checks to complete
+          kubectl wait --for=condition=complete job/health-check-green \
+            --namespace=sparc-production --timeout=300s
+          
+          # Verify health check results
+          if kubectl logs job/health-check-green --namespace=sparc-production | grep -q "UNHEALTHY"; then
+            echo "Health checks failed for green environment"
+            exit 1
+          fi
+
+      - name: Switch Traffic to Green (Blue-Green Cutover)
+        run: |
+          # Update services to point to green deployments
+          services=(auth-service access-control-service video-management-service analytics-service device-management-service environmental-service event-processing-service mobile-credential-service reporting-service tenant-service visitor-management-service api-gateway alert-service integration-service backup-recovery-service security-compliance-service maintenance-service elevator-control-service api-documentation-service testing-infrastructure-service)
+          
+          for service in "${services[@]}"; do
+            kubectl patch service $service -p '{"spec":{"selector":{"app":"'${service}'-green"}}}'
+          done
+          
+          # Wait for traffic switch to stabilize
+          sleep 30
+
+      - name: Post-Deployment Verification
+        run: |
+          # Run post-deployment verification tests
+          kubectl apply -f k8s/environments/production/post-deployment-tests.yaml
+          
+          # Wait for tests to complete
+          kubectl wait --for=condition=complete job/post-deployment-tests \
+            --namespace=sparc-production --timeout=300s
+          
+          # Check test results
+          if kubectl logs job/post-deployment-tests --namespace=sparc-production | grep -q "FAILED"; then
+            echo "Post-deployment tests failed - initiating rollback"
+            exit 1
+          fi
+
+      - name: Cleanup Blue Environment
+        if: success()
+        run: |
+          # Remove old blue deployments after successful green deployment
+          services=(auth-service access-control-service video-management-service analytics-service device-management-service environmental-service event-processing-service mobile-credential-service reporting-service tenant-service visitor-management-service api-gateway alert-service integration-service backup-recovery-service security-compliance-service maintenance-service elevator-control-service api-documentation-service testing-infrastructure-service)
+          
+          for service in "${services[@]}"; do
+            kubectl delete deployment $service --namespace=sparc-production --ignore-not-found=true
+            # Rename green to blue for next deployment
+            kubectl patch deployment ${service}-green -p '{"metadata":{"name":"'$service'"}}'
+          done
+
+      - name: Update deployment annotations
+        if: success()
+        run: |
+          kubectl annotate deployment --all \
+            deployment.kubernetes.io/revision-history="Deployed from commit ${{ github.sha }} at $(date)" \
+            --namespace=sparc-production
+
+      - name: Notify production deployment success
+        if: success()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"🚀 SPARC production deployment successful\nCommit: ${{ github.sha }}\nBranch: ${{ github.ref_name }}\nEnvironment: production\nDeployment: Blue-Green"}' \
+            ${{ env.SLACK_WEBHOOK }}
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "Deployment failed - initiating rollback"
+          
+          # Rollback services to blue environment
+          services=(auth-service access-control-service video-management-service analytics-service device-management-service environmental-service event-processing-service mobile-credential-service reporting-service tenant-service visitor-management-service api-gateway alert-service integration-service backup-recovery-service security-compliance-service maintenance-service elevator-control-service api-documentation-service testing-infrastructure-service)
+          
+          for service in "${services[@]}"; do
+            # Switch traffic back to blue if it exists
+            kubectl patch service $service -p '{"spec":{"selector":{"app":"'$service'"}}}'
+            # Remove failed green deployment
+            kubectl delete deployment ${service}-green --namespace=sparc-production --ignore-not-found=true
+          done
+          
+          # Rollback database if needed
+          kubectl apply -f k8s/environments/production/database-rollback-job.yaml
+
+      - name: Notify production deployment failure
+        if: failure()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{"text":"💥 SPARC production deployment failed and rolled back\nCommit: ${{ github.sha }}\nBranch: ${{ github.ref_name }}\nEnvironment: production\nCheck: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+            ${{ env.SLACK_WEBHOOK }}
+
+  cleanup:
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup old images
+        run: |
+          # Configure AWS credentials
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set default.region ${{ env.AWS_REGION }}
+          
+          # Keep only last 10 images per repository
+          services=(auth-service access-control-service video-management-service analytics-service device-management-service environmental-service event-processing-service mobile-credential-service reporting-service tenant-service visitor-management-service api-gateway alert-service integration-service backup-recovery-service security-compliance-service maintenance-service elevator-control-service api-documentation-service testing-infrastructure-service)
+          
+          for service in "${services[@]}"; do
+            aws ecr describe-images \
+              --repository-name sparc-$service \
+              --query 'sort_by(imageDetails,&imagePushedAt)[:-10].[imageDigest]' \
+              --output text | \
+            while read digest; do
+              if [ ! -z "$digest" ]; then
+                aws ecr batch-delete-image \
+                  --repository-name sparc-$service \
+                  --image-ids imageDigest=$digest
+              fi
+            done
+          done
+
+      - name: Update deployment metrics
+        run: |
+          # Send deployment metrics to CloudWatch
+          aws cloudwatch put-metric-data \
+            --namespace "SPARC/Deployments" \
+            --metric-data MetricName=DeploymentCount,Value=1,Unit=Count \
+            --region ${{ env.AWS_REGION }}

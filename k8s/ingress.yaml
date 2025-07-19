@@ -1,0 +1,664 @@
+---
+# Ingress for SPARC Platform with ALB Integration
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sparc-platform-ingress
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: sparc-ingress
+    app.kubernetes.io/component: ingress
+    app.kubernetes.io/part-of: sparc
+    app.kubernetes.io/version: "1.0.0"
+  annotations:
+    # AWS Load Balancer Controller annotations
+    kubernetes.io/ingress.class: "alb"
+    alb.ingress.kubernetes.io/scheme: "internet-facing"
+    alb.ingress.kubernetes.io/target-type: "ip"
+    alb.ingress.kubernetes.io/load-balancer-name: "sparc-platform-alb"
+    
+    # SSL/TLS Configuration with ACM
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:${AWS_REGION}:${AWS_ACCOUNT_ID}:certificate/${CERTIFICATE_ID}"
+    alb.ingress.kubernetes.io/ssl-policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+    
+    # Health Check Configuration
+    alb.ingress.kubernetes.io/healthcheck-protocol: "HTTP"
+    alb.ingress.kubernetes.io/healthcheck-port: "traffic-port"
+    alb.ingress.kubernetes.io/healthcheck-path: "/health"
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "30"
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "10"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+    
+    # Load Balancer Attributes
+    alb.ingress.kubernetes.io/load-balancer-attributes: |
+      idle_timeout.timeout_seconds=60,
+      routing.http2.enabled=true,
+      access_logs.s3.enabled=true,
+      access_logs.s3.bucket=sparc-audit-logs,
+      access_logs.s3.prefix=alb-access-logs,
+      deletion_protection.enabled=false
+    
+    # Security Groups and Subnets
+    alb.ingress.kubernetes.io/security-groups: "sg-sparc-alb"
+    alb.ingress.kubernetes.io/subnets: "subnet-public-1a,subnet-public-1b,subnet-public-1c"
+    
+    # WAF Integration
+    alb.ingress.kubernetes.io/wafv2-acl-arn: "arn:aws:wafv2:${AWS_REGION}:${AWS_ACCOUNT_ID}:regional/webacl/sparc-web-acl/web-acl-id"
+    
+    # Target Group Attributes
+    alb.ingress.kubernetes.io/target-group-attributes: |
+      stickiness.enabled=false,
+      deregistration_delay.timeout_seconds=30,
+      slow_start.duration_seconds=30,
+      load_balancing.algorithm.type=round_robin
+    
+    # Security Headers
+    alb.ingress.kubernetes.io/actions.response-headers: |
+      {
+        "type": "fixed-response",
+        "fixedResponseConfig": {
+          "contentType": "text/plain",
+          "statusCode": "200",
+          "messageBody": "OK"
+        },
+        "responseHeaders": {
+          "X-Frame-Options": "DENY",
+          "X-Content-Type-Options": "nosniff",
+          "X-XSS-Protection": "1; mode=block",
+          "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+          "Referrer-Policy": "strict-origin-when-cross-origin",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' https:; connect-src 'self' wss: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+        }
+      }
+    
+    # CORS Configuration
+    alb.ingress.kubernetes.io/actions.cors-preflight: |
+      {
+        "type": "fixed-response",
+        "fixedResponseConfig": {
+          "contentType": "text/plain",
+          "statusCode": "200",
+          "messageBody": "OK"
+        },
+        "responseHeaders": {
+          "Access-Control-Allow-Origin": "https://app.sparc.com,https://admin.sparc.com",
+          "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS,PATCH",
+          "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Requested-With,X-Tenant-ID,X-API-Key,X-Client-Version",
+          "Access-Control-Expose-Headers": "X-Rate-Limit-Remaining,X-Rate-Limit-Reset,X-Total-Count,X-Request-ID",
+          "Access-Control-Max-Age": "86400",
+          "Access-Control-Allow-Credentials": "true"
+        }
+      }
+    
+    # Rate Limiting and DDoS Protection
+    alb.ingress.kubernetes.io/shield-advanced-protection: "true"
+    
+    # Tags for AWS resources
+    alb.ingress.kubernetes.io/tags: |
+      Project=SPARC,
+      Environment=production,
+      Component=ingress,
+      ManagedBy=kubernetes,
+      CostCenter=Security,
+      Compliance=SOX-HIPAA-PCI
+    
+    # External DNS
+    external-dns.alpha.kubernetes.io/hostname: "app.sparc.com,api.sparc.com,admin.sparc.com"
+    
+    # Monitoring and Observability
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "10254"
+    prometheus.io/path: "/metrics"
+
+spec:
+  ingressClassName: alb
+  
+  # TLS Configuration
+  tls:
+  - hosts:
+    - app.sparc.com
+    - api.sparc.com
+    - admin.sparc.com
+    - "*.sparc.com"
+    secretName: sparc-platform-tls
+  
+  rules:
+  # Main Web Application
+  - host: app.sparc.com
+    http:
+      paths:
+      # CORS Preflight for all paths
+      - path: /*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: cors-preflight
+            port:
+              name: use-annotation
+      
+      # Static assets and web application
+      - path: /static/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: web-app
+            port:
+              number: 80
+      
+      - path: /assets/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: web-app
+            port:
+              number: 80
+      
+      # API routes through API Gateway
+      - path: /api/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 80
+      
+      # WebSocket connections for real-time features
+      - path: /ws/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 80
+      
+      # Health check endpoint
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 80
+      
+      # Default route to web application
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: web-app
+            port:
+              number: 80
+
+  # API Subdomain
+  - host: api.sparc.com
+    http:
+      paths:
+      # CORS Preflight
+      - path: /*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: cors-preflight
+            port:
+              name: use-annotation
+      
+      # All API routes
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 80
+      
+      # Health and monitoring endpoints
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 80
+      
+      - path: /metrics
+        pathType: Exact
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 80
+      
+      - path: /ready
+        pathType: Exact
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 80
+
+  # Admin Interface
+  - host: admin.sparc.com
+    http:
+      paths:
+      # CORS Preflight
+      - path: /*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: cors-preflight
+            port:
+              name: use-annotation
+      
+      # Admin API routes
+      - path: /api/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 80
+      
+      # Admin web interface
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: admin-web
+            port:
+              number: 80
+
+  # Video Streaming Subdomain
+  - host: video.sparc.com
+    http:
+      paths:
+      # HLS video streaming
+      - path: /hls/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: video-management-service
+            port:
+              number: 80
+      
+      # Video API endpoints
+      - path: /api/video/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: video-management-service
+            port:
+              number: 80
+      
+      # WebRTC signaling
+      - path: /webrtc/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: video-management-service
+            port:
+              number: 80
+
+  # Mobile API Subdomain
+  - host: mobile.sparc.com
+    http:
+      paths:
+      # Mobile credential service
+      - path: /api/mobile/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: mobile-credential-service
+            port:
+              number: 80
+      
+      # Mobile app downloads and updates
+      - path: /app/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: mobile-app-service
+            port:
+              number: 80
+
+---
+# Service for CORS preflight responses
+apiVersion: v1
+kind: Service
+metadata:
+  name: cors-preflight
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: cors-preflight
+    app.kubernetes.io/component: cors
+    app.kubernetes.io/part-of: sparc
+  annotations:
+    alb.ingress.kubernetes.io/actions.cors-preflight: |
+      {
+        "type": "fixed-response",
+        "fixedResponseConfig": {
+          "contentType": "text/plain",
+          "statusCode": "200",
+          "messageBody": "OK"
+        }
+      }
+spec:
+  type: ExternalName
+  externalName: cors-preflight.sparc.local
+
+---
+# TargetGroupBinding for fine-grained control
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: sparc-api-gateway-tgb
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: api-gateway-tgb
+    app.kubernetes.io/component: target-group
+    app.kubernetes.io/part-of: sparc
+spec:
+  serviceRef:
+    name: api-gateway
+    port: 80
+  targetGroupARN: "arn:aws:elasticloadbalancing:${AWS_REGION}:${AWS_ACCOUNT_ID}:targetgroup/sparc-api-gateway/target-group-id"
+  targetType: ip
+  
+  # Health check configuration
+  healthCheckConfig:
+    enabled: true
+    intervalSeconds: 30
+    path: "/health"
+    port: "traffic-port"
+    protocol: "HTTP"
+    timeoutSeconds: 10
+    healthyThresholdCount: 2
+    unhealthyThresholdCount: 3
+    matcher:
+      httpCode: "200"
+  
+  # Target group attributes
+  attributes:
+    - key: "deregistration_delay.timeout_seconds"
+      value: "30"
+    - key: "slow_start.duration_seconds"
+      value: "30"
+    - key: "stickiness.enabled"
+      value: "false"
+    - key: "load_balancing.algorithm.type"
+      value: "round_robin"
+    - key: "target_group_health.dns_failover.minimum_healthy_targets.count"
+      value: "1"
+    - key: "target_group_health.dns_failover.minimum_healthy_targets.percentage"
+      value: "off"
+    - key: "target_group_health.unhealthy_state_routing.minimum_healthy_targets.count"
+      value: "1"
+    - key: "target_group_health.unhealthy_state_routing.minimum_healthy_targets.percentage"
+      value: "off"
+
+---
+# IngressClass for ALB
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: alb
+  labels:
+    app.kubernetes.io/name: aws-load-balancer-controller
+    app.kubernetes.io/component: ingress-class
+spec:
+  controller: ingress.k8s.aws/alb
+  parameters:
+    apiGroup: elbv2.k8s.aws
+    kind: IngressClassParams
+    name: sparc-alb-params
+
+---
+# IngressClassParams for ALB configuration
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: IngressClassParams
+metadata:
+  name: sparc-alb-params
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: sparc-alb-params
+    app.kubernetes.io/component: ingress-params
+    app.kubernetes.io/part-of: sparc
+spec:
+  # Load balancer configuration
+  scheme: internet-facing
+  ipAddressType: ipv4
+  
+  # Security groups
+  securityGroups:
+    groupIds:
+    - sg-sparc-alb-public
+    - sg-sparc-alb-internal
+  
+  # Subnets
+  subnets:
+    ids:
+    - subnet-public-1a
+    - subnet-public-1b
+    - subnet-public-1c
+  
+  # Tags
+  tags:
+    Project: "SPARC"
+    Environment: "production"
+    Component: "ingress"
+    ManagedBy: "kubernetes"
+    CostCenter: "Security"
+    Compliance: "SOX-HIPAA-PCI"
+  
+  # Load balancer attributes
+  loadBalancerAttributes:
+  - key: "idle_timeout.timeout_seconds"
+    value: "60"
+  - key: "routing.http2.enabled"
+    value: "true"
+  - key: "access_logs.s3.enabled"
+    value: "true"
+  - key: "access_logs.s3.bucket"
+    value: "sparc-audit-logs"
+  - key: "access_logs.s3.prefix"
+    value: "alb-access-logs"
+  - key: "deletion_protection.enabled"
+    value: "false"
+  - key: "routing.http.drop_invalid_header_fields.enabled"
+    value: "true"
+  - key: "routing.http.preserve_host_header.enabled"
+    value: "true"
+  - key: "routing.http.x_amzn_tls_version_and_cipher_suite.enabled"
+    value: "true"
+  - key: "routing.http.xff_client_port.enabled"
+    value: "true"
+  - key: "waf.fail_open.enabled"
+    value: "false"
+
+---
+# Certificate for TLS termination
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sparc-platform-tls
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: sparc-tls
+    app.kubernetes.io/component: certificate
+    app.kubernetes.io/part-of: sparc
+  annotations:
+    # Reference to ACM certificate
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:${AWS_REGION}:${AWS_ACCOUNT_ID}:certificate/${CERTIFICATE_ID}"
+type: kubernetes.io/tls
+data:
+  # These will be populated by external-secrets or cert-manager
+  tls.crt: ""
+  tls.key: ""
+
+---
+# NetworkPolicy for Ingress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sparc-ingress-netpol
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: sparc-ingress-netpol
+    app.kubernetes.io/component: network-policy
+    app.kubernetes.io/part-of: sparc
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: sparc
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow traffic from ALB
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - namespaceSelector:
+        matchLabels:
+          name: aws-load-balancer-controller
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 8080
+  
+  # Allow internal service communication
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: sparc
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 8080
+  
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow HTTPS outbound
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow internal service communication
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: sparc
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 8080
+
+---
+# ServiceMonitor for Ingress metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: sparc-ingress-metrics
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: sparc-ingress-metrics
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aws-load-balancer-controller
+  endpoints:
+  - port: webhook
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+    - kube-system
+
+---
+# PrometheusRule for Ingress alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: sparc-ingress-alerts
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: sparc-ingress-alerts
+    app.kubernetes.io/component: alerting
+    app.kubernetes.io/part-of: sparc
+spec:
+  groups:
+  - name: sparc-ingress.rules
+    rules:
+    - alert: IngressHighLatency
+      expr: histogram_quantile(0.95, rate(alb_request_duration_seconds_bucket[5m])) > 2
+      for: 10m
+      labels:
+        severity: warning
+        component: ingress
+      annotations:
+        summary: "High latency on SPARC ingress"
+        description: "95th percentile latency is above 2 seconds for more than 10 minutes"
+    
+    - alert: IngressHighErrorRate
+      expr: rate(alb_response_status_code_total{status_code=~"5.."}[5m]) / rate(alb_response_status_code_total[5m]) > 0.05
+      for: 5m
+      labels:
+        severity: critical
+        component: ingress
+      annotations:
+        summary: "High error rate on SPARC ingress"
+        description: "Error rate is above 5% for more than 5 minutes"
+    
+    - alert: IngressCertificateExpiring
+      expr: (alb_certificate_expiry_timestamp - time()) / 86400 < 30
+      for: 1h
+      labels:
+        severity: warning
+        component: ingress
+      annotations:
+        summary: "SPARC ingress certificate expiring soon"
+        description: "Certificate will expire in less than 30 days"
+    
+    - alert: IngressTargetGroupUnhealthy
+      expr: alb_target_group_healthy_targets / alb_target_group_total_targets < 0.5
+      for: 5m
+      labels:
+        severity: critical
+        component: ingress
+      annotations:
+        summary: "SPARC ingress target group unhealthy"
+        description: "Less than 50% of targets are healthy in target group"
+    
+    - alert: IngressWAFBlocked
+      expr: increase(waf_blocked_requests_total[5m]) > 100
+      for: 2m
+      labels:
+        severity: warning
+        component: ingress
+      annotations:
+        summary: "High number of WAF blocked requests"
+        description: "More than 100 requests blocked by WAF in 5 minutes"

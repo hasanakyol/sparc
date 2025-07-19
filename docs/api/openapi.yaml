@@ -1,0 +1,1094 @@
+openapi: 3.0.3
+info:
+  title: SPARC Security Platform API
+  description: |
+    The SPARC Security Platform provides comprehensive physical security management including video surveillance, 
+    access control, environmental monitoring, and incident management.
+    
+    ## Authentication
+    
+    The API uses JWT bearer tokens for authentication. Obtain tokens via the `/auth/login` endpoint.
+    
+    ```
+    Authorization: Bearer <your-jwt-token>
+    ```
+    
+    ## Rate Limiting
+    
+    API requests are rate limited based on your subscription tier:
+    - Basic: 100 requests/minute
+    - Professional: 1000 requests/minute
+    - Enterprise: 10000 requests/minute
+    
+    ## Errors
+    
+    The API uses standard HTTP status codes and returns errors in a consistent format:
+    
+    ```json
+    {
+      "error": {
+        "code": "RESOURCE_NOT_FOUND",
+        "message": "The requested resource was not found",
+        "timestamp": "2024-01-20T10:30:00Z"
+      }
+    }
+    ```
+  version: 1.0.0
+  contact:
+    name: SPARC API Support
+    email: api-support@sparc.com
+    url: https://docs.sparc.com
+  license:
+    name: Proprietary
+    url: https://sparc.com/license
+
+servers:
+  - url: https://api.sparc.com/v1
+    description: Production server
+  - url: https://staging-api.sparc.com/v1
+    description: Staging server
+  - url: http://localhost:3000/api/v1
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Authentication
+    description: User authentication and session management
+  - name: Organizations
+    description: Organization and tenant management
+  - name: Users
+    description: User management operations
+  - name: Access Control
+    description: Door access control and credentials
+  - name: Video Management
+    description: Camera and video stream management
+  - name: Incidents
+    description: Security incident management
+  - name: Analytics
+    description: Analytics and reporting
+  - name: Alerts
+    description: Alert configuration and management
+
+paths:
+  # Authentication Endpoints
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticate user and receive JWT tokens
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+                - tenantId
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  minLength: 12
+                tenantId:
+                  type: string
+                  format: uuid
+                mfaToken:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+                  description: Required if user has MFA enabled
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: accessToken=...; HttpOnly; Secure; SameSite=Strict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: User logout
+      description: Invalidate current session and tokens
+      operationId: logout
+      responses:
+        '200':
+          description: Logout successful
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Exchange refresh token for new access token
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refreshToken
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/mfa/setup:
+    post:
+      tags:
+        - Authentication
+      summary: Setup MFA
+      description: Initialize MFA setup and receive QR code
+      operationId: setupMFA
+      responses:
+        '200':
+          description: MFA setup initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  qrCode:
+                    type: string
+                    description: Base64 encoded QR code image
+                  secret:
+                    type: string
+                    description: Manual entry secret
+                  backupCodes:
+                    type: array
+                    items:
+                      type: string
+                    description: One-time backup codes
+
+  # User Management
+  /users:
+    get:
+      tags:
+        - Users
+      summary: List users
+      description: Get a paginated list of users in the organization
+      operationId: listUsers
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SearchParam'
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [SUPER_ADMIN, ADMIN, OPERATOR, VIEWER]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, inactive, suspended]
+      responses:
+        '200':
+          description: Users retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Users
+      summary: Create user
+      description: Create a new user in the organization
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+
+  /users/{userId}:
+    get:
+      tags:
+        - Users
+      summary: Get user by ID
+      description: Retrieve detailed information about a specific user
+      operationId: getUserById
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: User retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags:
+        - Users
+      summary: Update user
+      description: Update user information
+      operationId: updateUser
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags:
+        - Users
+      summary: Delete user
+      description: Soft delete a user (marks as inactive)
+      operationId: deleteUser
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '204':
+          description: User deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # Access Control
+  /access-control/doors:
+    get:
+      tags:
+        - Access Control
+      summary: List doors
+      description: Get all doors in the organization
+      operationId: listDoors
+      parameters:
+        - name: siteId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: zoneId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [online, offline, alarm]
+      responses:
+        '200':
+          description: Doors retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Door'
+
+  /access-control/doors/{doorId}/unlock:
+    post:
+      tags:
+        - Access Control
+      summary: Unlock door
+      description: Remotely unlock a door
+      operationId: unlockDoor
+      parameters:
+        - name: doorId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                duration:
+                  type: integer
+                  description: Unlock duration in seconds
+                  default: 5
+                  minimum: 1
+                  maximum: 300
+                reason:
+                  type: string
+                  description: Reason for manual unlock
+      responses:
+        '200':
+          description: Door unlocked successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success, failed]
+                  message:
+                    type: string
+
+  /access-control/credentials:
+    get:
+      tags:
+        - Access Control
+      summary: List credentials
+      description: Get all access credentials
+      operationId: listCredentials
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [card, pin, biometric, mobile]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, suspended, expired]
+        - name: userId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Credentials retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Credential'
+
+  # Video Management
+  /cameras:
+    get:
+      tags:
+        - Video Management
+      summary: List cameras
+      description: Get all cameras in the organization
+      operationId: listCameras
+      parameters:
+        - name: siteId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: zoneId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [online, offline, recording, motion_detected]
+      responses:
+        '200':
+          description: Cameras retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Camera'
+
+  /cameras/{cameraId}/stream:
+    get:
+      tags:
+        - Video Management
+      summary: Get camera stream
+      description: Get live stream URL for a camera
+      operationId: getCameraStream
+      parameters:
+        - name: cameraId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: quality
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high, original]
+            default: high
+      responses:
+        '200':
+          description: Stream URL retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  streamUrl:
+                    type: string
+                    format: uri
+                  protocol:
+                    type: string
+                    enum: [rtsp, hls, webrtc]
+                  expires:
+                    type: string
+                    format: date-time
+
+  /cameras/{cameraId}/recordings:
+    get:
+      tags:
+        - Video Management
+      summary: Get camera recordings
+      description: Get recorded video segments for a camera
+      operationId: getCameraRecordings
+      parameters:
+        - name: cameraId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: startTime
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: endTime
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Recordings retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Recording'
+
+  # Incidents
+  /incidents:
+    get:
+      tags:
+        - Incidents
+      summary: List incidents
+      description: Get security incidents
+      operationId: listIncidents
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, investigating, resolved, closed]
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [critical, high, medium, low]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [intrusion, theft, vandalism, fire, medical, other]
+      responses:
+        '200':
+          description: Incidents retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Incident'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Incidents
+      summary: Create incident
+      description: Report a new security incident
+      operationId: createIncident
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateIncidentRequest'
+      responses:
+        '201':
+          description: Incident created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+
+  # Analytics
+  /analytics/dashboard:
+    get:
+      tags:
+        - Analytics
+      summary: Get dashboard metrics
+      description: Get real-time dashboard metrics
+      operationId: getDashboardMetrics
+      parameters:
+        - name: timeRange
+          in: query
+          schema:
+            type: string
+            enum: [1h, 24h, 7d, 30d, custom]
+            default: 24h
+        - name: startTime
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Required if timeRange is 'custom'
+        - name: endTime
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Required if timeRange is 'custom'
+      responses:
+        '200':
+          description: Metrics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardMetrics'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    UserIdParam:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    LimitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    SearchParam:
+      name: search
+      in: query
+      schema:
+        type: string
+        minLength: 1
+
+  schemas:
+    # Common Schemas
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - timestamp
+          properties:
+            code:
+              type: string
+              example: RESOURCE_NOT_FOUND
+            message:
+              type: string
+              example: The requested resource was not found
+            timestamp:
+              type: string
+              format: date-time
+            details:
+              type: object
+              additionalProperties: true
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+
+    # Auth Schemas
+    LoginResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        mfaRequired:
+          type: boolean
+          default: false
+
+    TokenResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        expiresIn:
+          type: integer
+          description: Token expiry in seconds
+
+    # User Schemas
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+          enum: [SUPER_ADMIN, ADMIN, OPERATOR, VIEWER]
+        organizationId:
+          type: string
+          format: uuid
+        isActive:
+          type: boolean
+        emailVerified:
+          type: boolean
+        mfaEnabled:
+          type: boolean
+        lastLoginAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
+      type: object
+      required:
+        - email
+        - firstName
+        - lastName
+        - role
+      properties:
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+          minLength: 1
+        lastName:
+          type: string
+          minLength: 1
+        role:
+          type: string
+          enum: [ADMIN, OPERATOR, VIEWER]
+        password:
+          type: string
+          minLength: 12
+          description: If not provided, user will receive email to set password
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+          enum: [ADMIN, OPERATOR, VIEWER]
+        isActive:
+          type: boolean
+
+    # Access Control Schemas
+    Door:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        location:
+          type: object
+          properties:
+            building:
+              type: string
+            floor:
+              type: string
+            room:
+              type: string
+        status:
+          type: string
+          enum: [online, offline, alarm]
+        state:
+          type: string
+          enum: [locked, unlocked, propped, forced]
+        lastAccessTime:
+          type: string
+          format: date-time
+        scheduleId:
+          type: string
+          format: uuid
+
+    Credential:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [card, pin, biometric, mobile]
+        status:
+          type: string
+          enum: [active, suspended, expired]
+        userId:
+          type: string
+          format: uuid
+        validFrom:
+          type: string
+          format: date-time
+        validUntil:
+          type: string
+          format: date-time
+        accessGroups:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    # Video Management Schemas
+    Camera:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        model:
+          type: string
+        status:
+          type: string
+          enum: [online, offline, recording, motion_detected]
+        location:
+          type: object
+          properties:
+            lat:
+              type: number
+            lng:
+              type: number
+            building:
+              type: string
+            floor:
+              type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [ptz, audio, analytics, thermal]
+        recordingEnabled:
+          type: boolean
+        streamUrls:
+          type: object
+          properties:
+            rtsp:
+              type: string
+            hls:
+              type: string
+
+    Recording:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        cameraId:
+          type: string
+          format: uuid
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        duration:
+          type: integer
+          description: Duration in seconds
+        size:
+          type: integer
+          description: Size in bytes
+        thumbnailUrl:
+          type: string
+          format: uri
+        downloadUrl:
+          type: string
+          format: uri
+
+    # Incident Schemas
+    Incident:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [intrusion, theft, vandalism, fire, medical, other]
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+        status:
+          type: string
+          enum: [open, investigating, resolved, closed]
+        location:
+          type: object
+          properties:
+            siteId:
+              type: string
+              format: uuid
+            building:
+              type: string
+            floor:
+              type: string
+            zone:
+              type: string
+        reportedBy:
+          type: string
+          format: uuid
+        assignedTo:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+
+    CreateIncidentRequest:
+      type: object
+      required:
+        - title
+        - type
+        - severity
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [intrusion, theft, vandalism, fire, medical, other]
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+        location:
+          type: object
+          properties:
+            siteId:
+              type: string
+              format: uuid
+            building:
+              type: string
+            floor:
+              type: string
+            zone:
+              type: string
+
+    # Analytics Schemas
+    DashboardMetrics:
+      type: object
+      properties:
+        summary:
+          type: object
+          properties:
+            totalAlerts:
+              type: integer
+            activeIncidents:
+              type: integer
+            onlineDevices:
+              type: integer
+            totalDevices:
+              type: integer
+        alerts:
+          type: object
+          properties:
+            critical:
+              type: integer
+            high:
+              type: integer
+            medium:
+              type: integer
+            low:
+              type: integer
+        trends:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              value:
+                type: number
+              metric:
+                type: string
+
+  responses:
+    BadRequestError:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnauthorizedError:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ForbiddenError:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFoundError:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ConflictError:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimitError:
+      description: Too many requests
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

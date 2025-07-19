@@ -1,0 +1,311 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backup
+  labels:
+    name: backup
+    security: high
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-service-account
+  namespace: backup
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backup-role
+  namespace: backup
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backup-role-binding
+  namespace: backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: backup-role
+subjects:
+  - kind: ServiceAccount
+    name: backup-service-account
+    namespace: backup
+
+---
+# Daily full backup job
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-backup-full
+  namespace: backup
+spec:
+  schedule: "0 3 * * *" # Daily at 3 AM UTC
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app: database-backup
+            type: full
+        spec:
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: sparc/backup-service:latest
+              command: ["/app/backup"]
+              args: ["--type", "full", "--tenant", "all"]
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: database-credentials
+                      key: url
+                - name: AWS_REGION
+                  value: "us-east-1"
+                - name: BACKUP_BUCKET
+                  value: "sparc-backups-prod"
+                - name: KMS_BACKUP_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-encryption
+                      key: kms-key-id
+                - name: ENCRYPTION_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-encryption
+                      key: encryption-key
+              resources:
+                requests:
+                  memory: "2Gi"
+                  cpu: "1"
+                limits:
+                  memory: "4Gi"
+                  cpu: "2"
+              volumeMounts:
+                - name: backup-temp
+                  mountPath: /tmp
+                - name: aws-credentials
+                  mountPath: /root/.aws
+                  readOnly: true
+          volumes:
+            - name: backup-temp
+              emptyDir:
+                sizeLimit: 100Gi
+            - name: aws-credentials
+              secret:
+                secretName: aws-backup-credentials
+
+---
+# Hourly incremental backup job
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-backup-incremental
+  namespace: backup
+spec:
+  schedule: "0 * * * *" # Every hour
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: database-backup
+            type: incremental
+        spec:
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: sparc/backup-service:latest
+              command: ["/app/backup"]
+              args: ["--type", "incremental", "--tenant", "all"]
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: database-credentials
+                      key: url
+                - name: AWS_REGION
+                  value: "us-east-1"
+                - name: BACKUP_BUCKET
+                  value: "sparc-backups-prod"
+                - name: KMS_BACKUP_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: backup-encryption
+                      key: kms-key-id
+              resources:
+                requests:
+                  memory: "1Gi"
+                  cpu: "500m"
+                limits:
+                  memory: "2Gi"
+                  cpu: "1"
+              volumeMounts:
+                - name: backup-temp
+                  mountPath: /tmp
+                - name: aws-credentials
+                  mountPath: /root/.aws
+                  readOnly: true
+          volumes:
+            - name: backup-temp
+              emptyDir:
+                sizeLimit: 50Gi
+            - name: aws-credentials
+              secret:
+                secretName: aws-backup-credentials
+
+---
+# Backup monitoring deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backup-monitor
+  namespace: backup
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backup-monitor
+  template:
+    metadata:
+      labels:
+        app: backup-monitor
+    spec:
+      serviceAccountName: backup-service-account
+      containers:
+        - name: monitor
+          image: sparc/backup-monitor:latest
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: url
+            - name: MONITORING_INTERVAL
+              value: "3600" # Check every hour
+            - name: ALERT_WEBHOOK
+              valueFrom:
+                secretKeyRef:
+                  name: monitoring-config
+                  key: webhook-url
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 60
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+# Backup verification job (weekly)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-verification
+  namespace: backup
+spec:
+  schedule: "0 6 * * 0" # Weekly on Sunday at 6 AM UTC
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 1
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: backup-verification
+        spec:
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+            - name: verify
+              image: sparc/backup-service:latest
+              command: ["/app/verify-backups"]
+              env:
+                - name: AWS_REGION
+                  value: "us-east-1"
+                - name: BACKUP_BUCKET
+                  value: "sparc-backups-prod"
+                - name: VERIFICATION_MODE
+                  value: "checksum" # checksum or restore-test
+              resources:
+                requests:
+                  memory: "512Mi"
+                  cpu: "250m"
+                limits:
+                  memory: "1Gi"
+                  cpu: "500m"
+
+---
+# ConfigMap for backup policies
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-policies
+  namespace: backup
+data:
+  retention-policy.yaml: |
+    policies:
+      production:
+        daily: 7
+        weekly: 4
+        monthly: 12
+        yearly: 5
+      staging:
+        daily: 3
+        weekly: 2
+        monthly: 3
+        yearly: 1
+      development:
+        daily: 1
+        weekly: 1
+        monthly: 1
+        yearly: 0
+  
+  backup-schedule.yaml: |
+    schedules:
+      full:
+        production: "0 3 * * *"
+        staging: "0 4 * * *"
+        development: "0 5 * * 0"
+      incremental:
+        production: "0 * * * *"
+        staging: "0 */2 * * *"
+        development: "disabled"
+      wal_archive:
+        production: "continuous"
+        staging: "*/15 * * * *"
+        development: "disabled"

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+    <!-- 
+    This file contains suppressions for OWASP Dependency Check false positives.
+    Only suppress vulnerabilities that have been verified as false positives or not applicable.
+    -->
+    
+    <!-- Example: Suppress a false positive CVE -->
+    <!--
+    <suppress>
+        <notes>This is a false positive - the vulnerability only affects versions prior to 1.0</notes>
+        <cve>CVE-2021-12345</cve>
+    </suppress>
+    -->
+    
+    <!-- Suppress test dependencies that don't affect production -->
+    <suppress>
+        <notes>Test dependencies - not used in production</notes>
+        <gav regex="true">.*:jest:.*</gav>
+        <gav regex="true">.*:eslint:.*</gav>
+        <gav regex="true">.*:prettier:.*</gav>
+    </suppress>
+    
+    <!-- Suppress Node.js runtime vulnerabilities (handled at infrastructure level) -->
+    <suppress>
+        <notes>Node.js runtime vulnerabilities are handled by infrastructure updates</notes>
+        <cpe regex="true">cpe:/a:nodejs:node\.js:.*</cpe>
+    </suppress>
+    
+    <!-- Suppress vulnerabilities in build tools -->
+    <suppress>
+        <notes>Build tools - not part of production runtime</notes>
+        <gav regex="true">.*:webpack:.*</gav>
+        <gav regex="true">.*:rollup:.*</gav>
+        <gav regex="true">.*:vite:.*</gav>
+    </suppress>
+    
+    <!-- Add specific suppressions below after verification -->
+    
+</suppressions>

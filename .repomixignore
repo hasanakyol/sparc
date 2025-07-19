@@ -1,0 +1,46 @@
+# CI/CD
+.github/
+
+# Kiro
+.kiro/
+
+# Documentation
+docs/
+**/*.md
+
+# Infrastructure
+infra/
+k8s/
+
+# Monitoring
+monitoring/
+
+# Scripts
+scripts/
+
+# Tests
+tests/
+**/__tests__/
+
+# Build artifacts and dependencies
+.yarn/
+**/node_modules/
+**/dist/
+**/build/
+**/coverage/
+
+# Legacy and backup files
+**/*.backup
+**/*.legacy.ts
+
+# Other
+repomix-output.xml
+*.log
+.env.example
+.env.production
+.secrets.baseline
+.gitleaks.toml
+CLAUDE.md
+CONTRIBUTING.md
+gaps.md
+outstanding-tasks-remaining.md

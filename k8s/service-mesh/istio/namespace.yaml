@@ -1,0 +1,52 @@
+# Istio System Namespace - Control Plane
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-system
+  labels:
+    name: istio-system
+    istio-injection: disabled  # Control plane doesn't need injection
+---
+# Istio Ingress Namespace - Ingress Gateways
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-ingress
+  labels:
+    name: istio-ingress
+    istio-injection: disabled  # Gateways have their own Envoy
+---
+# SPARC Platform Namespace with Istio Injection
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sparc
+  labels:
+    name: sparc
+    app.kubernetes.io/name: sparc
+    app.kubernetes.io/component: platform
+    istio-injection: enabled
+  annotations:
+    "istio.io/rev": default  # Use default Istio revision
+---
+# Database Namespace (No Istio injection for stateful services)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: database
+  labels:
+    name: database
+    app.kubernetes.io/name: database
+    app.kubernetes.io/component: storage
+    istio-injection: disabled
+---
+# Monitoring Namespace with selective injection
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    name: monitoring
+    app.kubernetes.io/name: monitoring
+    app.kubernetes.io/component: observability
+    istio-injection: disabled  # Use per-pod injection for monitoring tools

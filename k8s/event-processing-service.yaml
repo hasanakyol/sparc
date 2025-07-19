@@ -1,0 +1,425 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: event-processing-service-config
+  namespace: sparc
+  labels:
+    app: event-processing-service
+    component: config
+data:
+  NODE_ENV: "production"
+  PORT: "3007"
+  SERVICE_NAME: "event-processing-service"
+  LOG_LEVEL: "info"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  EVENT_CORRELATION_WINDOW: "300"
+  ALERT_BATCH_SIZE: "100"
+  ALERT_PROCESSING_INTERVAL: "5000"
+  EMAIL_SERVICE_URL: "http://notification-service:3012"
+  SMS_SERVICE_URL: "http://notification-service:3012"
+  METRICS_PORT: "9090"
+  HEALTH_CHECK_INTERVAL: "30000"
+  EVENT_RETENTION_DAYS: "30"
+  CORRELATION_RULES_REFRESH_INTERVAL: "60000"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: event-processing-service
+  namespace: sparc
+  labels:
+    app: event-processing-service
+    component: backend
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: event-processing-service
+  template:
+    metadata:
+      labels:
+        app: event-processing-service
+        component: backend
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: sparc-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: event-processing-service
+        image: sparc/event-processing-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3007
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: database-url
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: redis-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: jwt-secret
+        - name: EMAIL_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: email-api-key
+        - name: SMS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: sms-api-key
+        envFrom:
+        - configMapRef:
+            name: event-processing-service-config
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 12
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /app/cache
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      terminationGracePeriodSeconds: 30
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: event-processing-service
+  namespace: sparc
+  labels:
+    app: event-processing-service
+    component: backend
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3007
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: event-processing-service
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: event-processing-service-hpa
+  namespace: sparc
+  labels:
+    app: event-processing-service
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: event-processing-service
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      selectPolicy: Min
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: event-processing-service-pdb
+  namespace: sparc
+  labels:
+    app: event-processing-service
+    component: availability
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: event-processing-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: event-processing-service-netpol
+  namespace: sparc
+  labels:
+    app: event-processing-service
+    component: security
+spec:
+  podSelector:
+    matchLabels:
+      app: event-processing-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 3007
+    - protocol: TCP
+      port: 9090
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: notification-service
+    ports:
+    - protocol: TCP
+      port: 3012
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 587
+    - protocol: TCP
+      port: 25
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: event-processing-service-monitor
+  namespace: sparc
+  labels:
+    app: event-processing-service
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: event-processing-service
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: event-processing-service-alerts
+  namespace: sparc
+  labels:
+    app: event-processing-service
+    component: alerting
+spec:
+  groups:
+  - name: event-processing-service.rules
+    rules:
+    - alert: EventProcessingServiceDown
+      expr: up{job="event-processing-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: event-processing-service
+      annotations:
+        summary: "Event Processing Service is down"
+        description: "Event Processing Service has been down for more than 1 minute"
+
+    - alert: EventProcessingHighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="event-processing-service"}[5m])) > 0.5
+      for: 2m
+      labels:
+        severity: warning
+        service: event-processing-service
+      annotations:
+        summary: "High latency in Event Processing Service"
+        description: "95th percentile latency is above 500ms for more than 2 minutes"
+
+    - alert: EventProcessingHighErrorRate
+      expr: rate(http_requests_total{job="event-processing-service",status=~"5.."}[5m]) / rate(http_requests_total{job="event-processing-service"}[5m]) > 0.05
+      for: 2m
+      labels:
+        severity: warning
+        service: event-processing-service
+      annotations:
+        summary: "High error rate in Event Processing Service"
+        description: "Error rate is above 5% for more than 2 minutes"
+
+    - alert: EventProcessingQueueBacklog
+      expr: event_processing_queue_size{job="event-processing-service"} > 1000
+      for: 5m
+      labels:
+        severity: warning
+        service: event-processing-service
+      annotations:
+        summary: "Event processing queue backlog"
+        description: "Event processing queue has more than 1000 pending events for more than 5 minutes"
+
+    - alert: EventProcessingMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"event-processing-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 2m
+      labels:
+        severity: warning
+        service: event-processing-service
+      annotations:
+        summary: "High memory usage in Event Processing Service"
+        description: "Memory usage is above 90% for more than 2 minutes"
+
+    - alert: EventProcessingCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{pod=~"event-processing-service-.*"}[5m]) / container_spec_cpu_quota * 100 > 80
+      for: 5m
+      labels:
+        severity: warning
+        service: event-processing-service
+      annotations:
+        summary: "High CPU usage in Event Processing Service"
+        description: "CPU usage is above 80% for more than 5 minutes"
+
+    - alert: EventCorrelationRuleFailure
+      expr: increase(event_correlation_rule_failures_total{job="event-processing-service"}[5m]) > 10
+      for: 1m
+      labels:
+        severity: warning
+        service: event-processing-service
+      annotations:
+        summary: "Event correlation rule failures"
+        description: "More than 10 event correlation rule failures in the last 5 minutes"
+
+    - alert: AlertDeliveryFailure
+      expr: increase(alert_delivery_failures_total{job="event-processing-service"}[5m]) > 5
+      for: 1m
+      labels:
+        severity: critical
+        service: event-processing-service
+      annotations:
+        summary: "Alert delivery failures"
+        description: "More than 5 alert delivery failures in the last 5 minutes"
+
+    - alert: EventProcessingRedisConnectionFailure
+      expr: redis_connection_failures_total{job="event-processing-service"} > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: event-processing-service
+      annotations:
+        summary: "Redis connection failure in Event Processing Service"
+        description: "Event Processing Service cannot connect to Redis"

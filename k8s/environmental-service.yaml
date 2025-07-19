@@ -1,0 +1,553 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: environmental-service-config
+  namespace: sparc
+  labels:
+    app: environmental-service
+    component: config
+spec:
+data:
+  NODE_ENV: "production"
+  PORT: "3006"
+  LOG_LEVEL: "info"
+  METRICS_PORT: "9090"
+  HEALTH_CHECK_PORT: "8080"
+  
+  # Sensor Configuration
+  SENSOR_SCAN_INTERVAL: "30000"
+  SENSOR_DATA_RETENTION: "7d"
+  SENSOR_BATCH_SIZE: "100"
+  
+  # HVAC Integration
+  HVAC_PROTOCOL: "BACnet"
+  HVAC_SCAN_INTERVAL: "60000"
+  HVAC_TIMEOUT: "5000"
+  
+  # Thresholds
+  TEMPERATURE_MIN: "18"
+  TEMPERATURE_MAX: "26"
+  HUMIDITY_MIN: "30"
+  HUMIDITY_MAX: "70"
+  AIR_QUALITY_THRESHOLD: "100"
+  
+  # Alert Configuration
+  ALERT_COOLDOWN: "300000"
+  CRITICAL_ALERT_THRESHOLD: "5"
+  
+  # Database
+  DB_POOL_SIZE: "10"
+  DB_TIMEOUT: "30000"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: environmental-service
+  namespace: sparc
+  labels:
+    app: environmental-service
+    component: microservice
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: environmental-service
+  template:
+    metadata:
+      labels:
+        app: environmental-service
+        component: microservice
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: environmental-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: environmental-service
+        image: sparc/environmental-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3006
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: redis-secret
+              key: url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: jwt-secret
+              key: secret
+        envFrom:
+        - configMapRef:
+            name: environmental-service-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /startup
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 12
+        volumeMounts:
+        - name: sensor-config
+          mountPath: /app/config/sensors
+          readOnly: true
+        - name: hvac-config
+          mountPath: /app/config/hvac
+          readOnly: true
+      volumes:
+      - name: sensor-config
+        configMap:
+          name: sensor-protocols-config
+      - name: hvac-config
+        configMap:
+          name: hvac-integration-config
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - key: "sparc.io/environmental"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: environmental-service
+  namespace: sparc
+  labels:
+    app: environmental-service
+    component: microservice
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3006
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: environmental-service
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: environmental-service
+  namespace: sparc
+  labels:
+    app: environmental-service
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: environmental-service-hpa
+  namespace: sparc
+  labels:
+    app: environmental-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: environmental-service
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: sensor_processing_rate
+      target:
+        type: AverageValue
+        averageValue: "100"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: environmental-service-pdb
+  namespace: sparc
+  labels:
+    app: environmental-service
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: environmental-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: environmental-service-netpol
+  namespace: sparc
+  labels:
+    app: environmental-service
+spec:
+  podSelector:
+    matchLabels:
+      app: environmental-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 3006
+    - protocol: TCP
+      port: 9090
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 5432
+    - protocol: TCP
+      port: 6379
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 161
+    - protocol: UDP
+      port: 161
+    - protocol: TCP
+      port: 47808
+    - protocol: UDP
+      port: 47808
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: environmental-service-monitor
+  namespace: sparc
+  labels:
+    app: environmental-service
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: environmental-service
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+  - port: http
+    path: /health/metrics
+    interval: 60s
+    scrapeTimeout: 5s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: environmental-service-alerts
+  namespace: sparc
+  labels:
+    app: environmental-service
+    monitoring: prometheus
+spec:
+  groups:
+  - name: environmental-service.rules
+    interval: 30s
+    rules:
+    - alert: EnvironmentalServiceDown
+      expr: up{job="environmental-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: environmental-service
+      annotations:
+        summary: "Environmental service is down"
+        description: "Environmental service has been down for more than 1 minute"
+    
+    - alert: EnvironmentalServiceHighCPU
+      expr: rate(container_cpu_usage_seconds_total{pod=~"environmental-service-.*"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: environmental-service
+      annotations:
+        summary: "Environmental service high CPU usage"
+        description: "Environmental service CPU usage is above 80% for 5 minutes"
+    
+    - alert: EnvironmentalServiceHighMemory
+      expr: container_memory_usage_bytes{pod=~"environmental-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: environmental-service
+      annotations:
+        summary: "Environmental service high memory usage"
+        description: "Environmental service memory usage is above 90% for 5 minutes"
+    
+    - alert: SensorDataProcessingLag
+      expr: environmental_sensor_processing_lag_seconds > 300
+      for: 2m
+      labels:
+        severity: warning
+        service: environmental-service
+      annotations:
+        summary: "Sensor data processing lag detected"
+        description: "Sensor data processing is lagging by {{ $value }} seconds"
+    
+    - alert: TemperatureThresholdExceeded
+      expr: environmental_temperature_celsius > 30 or environmental_temperature_celsius < 15
+      for: 1m
+      labels:
+        severity: critical
+        service: environmental-service
+      annotations:
+        summary: "Temperature threshold exceeded"
+        description: "Temperature is {{ $value }}°C in {{ $labels.location }}"
+    
+    - alert: HumidityThresholdExceeded
+      expr: environmental_humidity_percent > 80 or environmental_humidity_percent < 20
+      for: 2m
+      labels:
+        severity: warning
+        service: environmental-service
+      annotations:
+        summary: "Humidity threshold exceeded"
+        description: "Humidity is {{ $value }}% in {{ $labels.location }}"
+    
+    - alert: HVACSystemOffline
+      expr: environmental_hvac_system_status == 0
+      for: 5m
+      labels:
+        severity: critical
+        service: environmental-service
+      annotations:
+        summary: "HVAC system offline"
+        description: "HVAC system {{ $labels.system_id }} has been offline for 5 minutes"
+    
+    - alert: SensorOffline
+      expr: environmental_sensor_last_reading_seconds > 600
+      for: 1m
+      labels:
+        severity: warning
+        service: environmental-service
+      annotations:
+        summary: "Environmental sensor offline"
+        description: "Sensor {{ $labels.sensor_id }} in {{ $labels.location }} has not reported data for 10 minutes"
+    
+    - alert: AirQualityPoor
+      expr: environmental_air_quality_index > 150
+      for: 5m
+      labels:
+        severity: warning
+        service: environmental-service
+      annotations:
+        summary: "Poor air quality detected"
+        description: "Air quality index is {{ $value }} in {{ $labels.location }}"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sensor-protocols-config
+  namespace: sparc
+  labels:
+    app: environmental-service
+    component: config
+data:
+  modbus.json: |
+    {
+      "protocol": "modbus",
+      "port": 502,
+      "timeout": 5000,
+      "retries": 3,
+      "sensors": {
+        "temperature": {
+          "register": 30001,
+          "type": "input",
+          "scale": 0.1,
+          "unit": "celsius"
+        },
+        "humidity": {
+          "register": 30002,
+          "type": "input",
+          "scale": 0.1,
+          "unit": "percent"
+        }
+      }
+    }
+  
+  snmp.json: |
+    {
+      "protocol": "snmp",
+      "version": "2c",
+      "community": "public",
+      "port": 161,
+      "timeout": 5000,
+      "oids": {
+        "temperature": "1.3.6.1.4.1.9.9.13.1.3.1.3",
+        "humidity": "1.3.6.1.4.1.9.9.13.1.3.1.4",
+        "airQuality": "1.3.6.1.4.1.9.9.13.1.3.1.5"
+      }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hvac-integration-config
+  namespace: sparc
+  labels:
+    app: environmental-service
+    component: config
+data:
+  bacnet.json: |
+    {
+      "protocol": "bacnet",
+      "port": 47808,
+      "deviceId": 1234,
+      "maxApduLength": 1476,
+      "segmentationSupported": true,
+      "objects": {
+        "temperature_setpoint": {
+          "type": "analogValue",
+          "instance": 1,
+          "property": "presentValue"
+        },
+        "fan_speed": {
+          "type": "analogOutput",
+          "instance": 1,
+          "property": "presentValue"
+        },
+        "system_status": {
+          "type": "binaryValue",
+          "instance": 1,
+          "property": "presentValue"
+        }
+      }
+    }
+  
+  mqtt.json: |
+    {
+      "protocol": "mqtt",
+      "broker": "hvac-broker.sparc.svc.cluster.local",
+      "port": 1883,
+      "topics": {
+        "temperature_control": "hvac/temperature/set",
+        "fan_control": "hvac/fan/set",
+        "status": "hvac/status"
+      },
+      "qos": 1,
+      "retain": false
+    }

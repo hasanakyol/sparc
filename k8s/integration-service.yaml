@@ -1,0 +1,621 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: integration-service
+  namespace: sparc
+  labels:
+    app: integration-service
+    component: backend
+    tier: service
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: integration-service
+  template:
+    metadata:
+      labels:
+        app: integration-service
+        component: backend
+        tier: service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3009"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: integration-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+      - name: integration-service
+        image: sparc/integration-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3009
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3009"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: jwt-secret
+        - name: LDAP_URL
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: ldap-url
+        - name: LDAP_BIND_DN
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: ldap-bind-dn
+        - name: LDAP_BIND_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: ldap-bind-password
+        - name: LDAP_BASE_DN
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: ldap-base-dn
+        - name: AD_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: ad-domain
+        - name: AD_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: ad-username
+        - name: AD_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: ad-password
+        - name: HVAC_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: hvac-api-url
+        - name: HVAC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: hvac-api-key
+        - name: FIRE_SAFETY_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: fire-safety-api-url
+        - name: FIRE_SAFETY_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: fire-safety-api-key
+        - name: ELEVATOR_OTIS_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: elevator-otis-api-url
+        - name: ELEVATOR_OTIS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: elevator-otis-api-key
+        - name: ELEVATOR_KONE_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: elevator-kone-api-url
+        - name: ELEVATOR_KONE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: elevator-kone-api-key
+        - name: ELEVATOR_SCHINDLER_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: elevator-schindler-api-url
+        - name: ELEVATOR_SCHINDLER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: elevator-schindler-api-key
+        - name: ELEVATOR_THYSSENKRUPP_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: elevator-thyssenkrupp-api-url
+        - name: ELEVATOR_THYSSENKRUPP_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: elevator-thyssenkrupp-api-key
+        - name: VISITOR_SYSTEM_API_URL
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: visitor-system-api-url
+        - name: VISITOR_SYSTEM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: visitor-system-api-key
+        - name: BACNET_GATEWAY_URL
+          valueFrom:
+            configMapKeyRef:
+              name: integration-config
+              key: bacnet-gateway-url
+        - name: MODBUS_GATEWAY_URL
+          valueFrom:
+            configMapKeyRef:
+              name: integration-config
+              key: modbus-gateway-url
+        - name: WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: integration-secrets
+              key: webhook-secret
+        - name: CORS_ORIGIN
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: cors-origin
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: log-level
+        - name: RATE_LIMIT_WINDOW_MS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: rate-limit-window-ms
+        - name: RATE_LIMIT_MAX_REQUESTS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: rate-limit-max-requests
+        - name: LDAP_SYNC_INTERVAL_MINUTES
+          valueFrom:
+            configMapKeyRef:
+              name: integration-config
+              key: ldap-sync-interval-minutes
+        - name: LDAP_SYNC_BATCH_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: integration-config
+              key: ldap-sync-batch-size
+        - name: WEBHOOK_TIMEOUT_MS
+          valueFrom:
+            configMapKeyRef:
+              name: integration-config
+              key: webhook-timeout-ms
+        - name: WEBHOOK_RETRY_ATTEMPTS
+          valueFrom:
+            configMapKeyRef:
+              name: integration-config
+              key: webhook-retry-attempts
+        - name: INTEGRATION_HEALTH_CHECK_INTERVAL_MINUTES
+          valueFrom:
+            configMapKeyRef:
+              name: integration-config
+              key: integration-health-check-interval-minutes
+        - name: PROTOCOL_ADAPTER_TIMEOUT_MS
+          valueFrom:
+            configMapKeyRef:
+              name: integration-config
+              key: protocol-adapter-timeout-ms
+        - name: BATCH_SYNC_CHUNK_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: integration-config
+              key: batch-sync-chunk-size
+        - name: FAILOVER_RETRY_DELAY_MS
+          valueFrom:
+            configMapKeyRef:
+              name: integration-config
+              key: failover-retry-delay-ms
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 30
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: logs
+          mountPath: /app/logs
+        - name: integration-certs
+          mountPath: /app/certs
+          readOnly: true
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+      - name: integration-certs
+        secret:
+          secretName: integration-certs
+          defaultMode: 0400
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - integration-service
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+      - key: "sparc.io/integration-service"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: integration-service
+  namespace: sparc
+  labels:
+    app: integration-service
+    component: backend
+    tier: service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: integration-service
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: integration-service
+  namespace: sparc
+  labels:
+    app: integration-service
+    component: backend
+    tier: service
+automountServiceAccountToken: false
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: integration-service-hpa
+  namespace: sparc
+  labels:
+    app: integration-service
+    component: backend
+    tier: service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: integration-service
+  minReplicas: 3
+  maxReplicas: 15
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: integration-service-pdb
+  namespace: sparc
+  labels:
+    app: integration-service
+    component: backend
+    tier: service
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: integration-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: integration-service-netpol
+  namespace: sparc
+  labels:
+    app: integration-service
+    component: backend
+    tier: service
+spec:
+  podSelector:
+    matchLabels:
+      app: integration-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          app: nginx-ingress
+    ports:
+    - protocol: TCP
+      port: 3009
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 3009
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 389
+    - protocol: TCP
+      port: 636
+    - protocol: TCP
+      port: 3268
+    - protocol: TCP
+      port: 3269
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 502
+    - protocol: TCP
+      port: 47808
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: integration-config
+  namespace: sparc
+  labels:
+    app: integration-service
+    component: config
+data:
+  ldap-sync-interval-minutes: "60"
+  ldap-sync-batch-size: "100"
+  webhook-timeout-ms: "30000"
+  webhook-retry-attempts: "3"
+  integration-health-check-interval-minutes: "5"
+  protocol-adapter-timeout-ms: "10000"
+  batch-sync-chunk-size: "50"
+  failover-retry-delay-ms: "5000"
+  bacnet-gateway-url: "http://bacnet-gateway.sparc.svc.cluster.local:47808"
+  modbus-gateway-url: "http://modbus-gateway.sparc.svc.cluster.local:502"
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: integration-service
+  namespace: sparc
+  labels:
+    app: integration-service
+    component: backend
+    tier: service
+spec:
+  selector:
+    matchLabels:
+      app: integration-service
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: integration-service-alerts
+  namespace: sparc
+  labels:
+    app: integration-service
+    component: backend
+    tier: service
+spec:
+  groups:
+  - name: integration-service
+    rules:
+    - alert: IntegrationServiceDown
+      expr: up{job="integration-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: integration-service
+      annotations:
+        summary: "Integration Service is down"
+        description: "Integration Service has been down for more than 1 minute"
+    - alert: IntegrationServiceHighCPU
+      expr: rate(container_cpu_usage_seconds_total{pod=~"integration-service-.*"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: integration-service
+      annotations:
+        summary: "Integration Service high CPU usage"
+        description: "Integration Service CPU usage is above 80% for more than 5 minutes"
+    - alert: IntegrationServiceHighMemory
+      expr: container_memory_usage_bytes{pod=~"integration-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: integration-service
+      annotations:
+        summary: "Integration Service high memory usage"
+        description: "Integration Service memory usage is above 90% for more than 5 minutes"
+    - alert: IntegrationServiceLDAPSyncFailure
+      expr: increase(integration_ldap_sync_failures_total[5m]) > 0
+      for: 1m
+      labels:
+        severity: warning
+        service: integration-service
+      annotations:
+        summary: "Integration Service LDAP sync failures"
+        description: "Integration Service has experienced LDAP sync failures in the last 5 minutes"
+    - alert: IntegrationServiceWebhookFailures
+      expr: rate(integration_webhook_failures_total[5m]) > 0.1
+      for: 2m
+      labels:
+        severity: warning
+        service: integration-service
+      annotations:
+        summary: "Integration Service webhook failures"
+        description: "Integration Service webhook failure rate is above 10% for more than 2 minutes"
+    - alert: IntegrationServiceExternalSystemDown
+      expr: integration_external_system_health == 0
+      for: 2m
+      labels:
+        severity: critical
+        service: integration-service
+      annotations:
+        summary: "External system integration down"
+        description: "External system {{ $labels.system_name }} has been unreachable for more than 2 minutes"

@@ -1,0 +1,1525 @@
+openapi: 3.0.3
+info:
+  title: SPARC Tenant Service
+  description: |
+    The SPARC Tenant Service manages multi-tenant operations including organizations, sites, zones,
+    and tenant-specific configurations. This service is the foundation of SPARC's multi-tenant architecture.
+    
+    ## Hierarchy
+    
+    The tenant hierarchy follows this structure:
+    ```
+    Organization (Tenant)
+    └── Sites (Physical Locations)
+        └── Zones (Areas within Sites)
+            └── Resources (Cameras, Doors, etc.)
+    ```
+    
+    ## Key Features
+    
+    - Organization management and provisioning
+    - Site and zone configuration
+    - Tenant isolation and data segregation
+    - License management
+    - Tenant-specific settings and customization
+    - Resource allocation and limits
+    - Billing integration
+    - Tenant onboarding workflow
+    
+    ## Tenant Isolation
+    
+    All data is strictly isolated between tenants. The X-Tenant-ID header is required
+    for all operations and enforces data access boundaries.
+  version: 1.0.0
+  contact:
+    name: SPARC Platform Team
+    email: platform@sparc.security
+    url: https://sparc.security/support
+
+servers:
+  - url: https://api.sparc.security/v1/tenant
+    description: Production
+  - url: https://staging-api.sparc.security/v1/tenant
+    description: Staging
+  - url: http://localhost:3006
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Organizations
+    description: Organization (tenant) management
+  - name: Sites
+    description: Physical location management
+  - name: Zones
+    description: Zone management within sites
+  - name: Settings
+    description: Tenant-specific settings
+  - name: Licenses
+    description: License and subscription management
+  - name: Resources
+    description: Resource allocation and limits
+  - name: Onboarding
+    description: Tenant onboarding operations
+  - name: Health
+    description: Service health checks
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Get service health
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /organizations:
+    get:
+      tags:
+        - Organizations
+      summary: List organizations
+      description: |
+        Returns organizations. For super-admins, returns all organizations.
+        For regular users, returns only their organization.
+      operationId: listOrganizations
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, suspended, trial, cancelled]
+          description: Filter by status
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Search by name
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of organizations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organizations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Organization'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Organizations
+      summary: Create organization
+      description: Creates a new organization (tenant). Requires super-admin privileges.
+      operationId: createOrganization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrganizationRequest'
+      responses:
+        '201':
+          description: Organization created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          description: Insufficient privileges
+        '409':
+          description: Organization already exists
+
+  /organizations/{organizationId}:
+    get:
+      tags:
+        - Organizations
+      summary: Get organization
+      operationId: getOrganization
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      responses:
+        '200':
+          description: Organization details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags:
+        - Organizations
+      summary: Update organization
+      operationId: updateOrganization
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrganizationRequest'
+      responses:
+        '200':
+          description: Organization updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags:
+        - Organizations
+      summary: Delete organization
+      description: |
+        Soft deletes an organization. Requires super-admin privileges.
+        This operation will archive all associated data.
+      operationId: deleteOrganization
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+      responses:
+        '204':
+          description: Organization deleted
+        '403':
+          description: Insufficient privileges
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /sites:
+    get:
+      tags:
+        - Sites
+      summary: List sites
+      description: Returns all sites for the current tenant
+      operationId: listSites
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, inactive, maintenance]
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Search by name or address
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of sites
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sites:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Site'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Sites
+      summary: Create site
+      description: Creates a new site for the tenant
+      operationId: createSite
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSiteRequest'
+      responses:
+        '201':
+          description: Site created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+
+  /sites/{siteId}:
+    get:
+      tags:
+        - Sites
+      summary: Get site
+      operationId: getSite
+      parameters:
+        - $ref: '#/components/parameters/SiteId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Site details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags:
+        - Sites
+      summary: Update site
+      operationId: updateSite
+      parameters:
+        - $ref: '#/components/parameters/SiteId'
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSiteRequest'
+      responses:
+        '200':
+          description: Site updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags:
+        - Sites
+      summary: Delete site
+      operationId: deleteSite
+      parameters:
+        - $ref: '#/components/parameters/SiteId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '204':
+          description: Site deleted
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          description: Site has active resources
+
+  /sites/{siteId}/zones:
+    get:
+      tags:
+        - Zones
+      summary: List zones in site
+      operationId: listZones
+      parameters:
+        - $ref: '#/components/parameters/SiteId'
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: floor
+          schema:
+            type: integer
+          description: Filter by floor number
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of zones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  zones:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Zone'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Zones
+      summary: Create zone
+      operationId: createZone
+      parameters:
+        - $ref: '#/components/parameters/SiteId'
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateZoneRequest'
+      responses:
+        '201':
+          description: Zone created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Zone'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+
+  /zones/{zoneId}:
+    get:
+      tags:
+        - Zones
+      summary: Get zone
+      operationId: getZone
+      parameters:
+        - $ref: '#/components/parameters/ZoneId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Zone details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Zone'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags:
+        - Zones
+      summary: Update zone
+      operationId: updateZone
+      parameters:
+        - $ref: '#/components/parameters/ZoneId'
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateZoneRequest'
+      responses:
+        '200':
+          description: Zone updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Zone'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags:
+        - Zones
+      summary: Delete zone
+      operationId: deleteZone
+      parameters:
+        - $ref: '#/components/parameters/ZoneId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '204':
+          description: Zone deleted
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          description: Zone has active resources
+
+  /settings:
+    get:
+      tags:
+        - Settings
+      summary: Get tenant settings
+      description: Returns all settings for the current tenant
+      operationId: getTenantSettings
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Tenant settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantSettings'
+
+    put:
+      tags:
+        - Settings
+      summary: Update tenant settings
+      operationId: updateTenantSettings
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantSettingsRequest'
+      responses:
+        '200':
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantSettings'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+
+  /licenses:
+    get:
+      tags:
+        - Licenses
+      summary: Get license information
+      description: Returns current license and subscription details
+      operationId: getLicenses
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: License information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseInfo'
+
+    put:
+      tags:
+        - Licenses
+      summary: Update license
+      description: Updates license key or subscription. Requires super-admin privileges.
+      operationId: updateLicense
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLicenseRequest'
+      responses:
+        '200':
+          description: License updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseInfo'
+        '400':
+          description: Invalid license
+        '403':
+          description: Insufficient privileges
+
+  /resources/usage:
+    get:
+      tags:
+        - Resources
+      summary: Get resource usage
+      description: Returns current resource usage against limits
+      operationId: getResourceUsage
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Resource usage information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceUsage'
+
+  /resources/limits:
+    get:
+      tags:
+        - Resources
+      summary: Get resource limits
+      description: Returns configured resource limits for the tenant
+      operationId: getResourceLimits
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Resource limits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceLimits'
+
+    put:
+      tags:
+        - Resources
+      summary: Update resource limits
+      description: Updates resource limits. Requires super-admin privileges.
+      operationId: updateResourceLimits
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateResourceLimitsRequest'
+      responses:
+        '200':
+          description: Resource limits updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceLimits'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '403':
+          description: Insufficient privileges
+
+  /onboarding/start:
+    post:
+      tags:
+        - Onboarding
+      summary: Start onboarding
+      description: Initiates the onboarding process for a new tenant
+      operationId: startOnboarding
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartOnboardingRequest'
+      responses:
+        '201':
+          description: Onboarding started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingStatus'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+
+  /onboarding/status:
+    get:
+      tags:
+        - Onboarding
+      summary: Get onboarding status
+      description: Returns the current onboarding status and progress
+      operationId: getOnboardingStatus
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Onboarding status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingStatus'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TenantId:
+      in: header
+      name: X-Tenant-ID
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Tenant identifier
+
+    OrganizationId:
+      in: path
+      name: organizationId
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    SiteId:
+      in: path
+      name: siteId
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    ZoneId:
+      in: path
+      name: zoneId
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    PageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    PageNumber:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        database:
+          type: string
+          enum: [healthy, unhealthy]
+        cache:
+          type: string
+          enum: [healthy, unhealthy]
+
+    Organization:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        displayName:
+          type: string
+        domain:
+          type: string
+          description: Primary domain
+        status:
+          type: string
+          enum: [active, suspended, trial, cancelled]
+        plan:
+          type: string
+          enum: [starter, professional, enterprise, custom]
+        industry:
+          type: string
+          enum: [retail, healthcare, education, government, finance, manufacturing, other]
+        contact:
+          type: object
+          properties:
+            name:
+              type: string
+            email:
+              type: string
+              format: email
+            phone:
+              type: string
+            address:
+              $ref: '#/components/schemas/Address'
+        settings:
+          type: object
+          properties:
+            timezone:
+              type: string
+              example: America/New_York
+            dateFormat:
+              type: string
+              example: MM/DD/YYYY
+            currency:
+              type: string
+              example: USD
+            language:
+              type: string
+              example: en
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          description: Trial or subscription expiration
+
+    CreateOrganizationRequest:
+      type: object
+      required:
+        - name
+        - domain
+        - contact
+        - plan
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        displayName:
+          type: string
+        domain:
+          type: string
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+$'
+        plan:
+          type: string
+          enum: [starter, professional, enterprise, custom]
+        industry:
+          type: string
+          enum: [retail, healthcare, education, government, finance, manufacturing, other]
+        contact:
+          type: object
+          required:
+            - name
+            - email
+          properties:
+            name:
+              type: string
+            email:
+              type: string
+              format: email
+            phone:
+              type: string
+            address:
+              $ref: '#/components/schemas/Address'
+        settings:
+          type: object
+          properties:
+            timezone:
+              type: string
+            dateFormat:
+              type: string
+            currency:
+              type: string
+            language:
+              type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    UpdateOrganizationRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+        status:
+          type: string
+          enum: [active, suspended]
+        contact:
+          type: object
+          properties:
+            name:
+              type: string
+            email:
+              type: string
+              format: email
+            phone:
+              type: string
+            address:
+              $ref: '#/components/schemas/Address'
+        settings:
+          type: object
+          properties:
+            timezone:
+              type: string
+            dateFormat:
+              type: string
+            currency:
+              type: string
+            language:
+              type: string
+
+    Site:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+          description: Site code for quick reference
+        type:
+          type: string
+          enum: [headquarters, branch, warehouse, retail, datacenter, other]
+        status:
+          type: string
+          enum: [active, inactive, maintenance]
+        address:
+          $ref: '#/components/schemas/Address'
+        coordinates:
+          type: object
+          properties:
+            latitude:
+              type: number
+            longitude:
+              type: number
+        timezone:
+          type: string
+          example: America/Chicago
+        operatingHours:
+          type: object
+          properties:
+            monday:
+              $ref: '#/components/schemas/DaySchedule'
+            tuesday:
+              $ref: '#/components/schemas/DaySchedule'
+            wednesday:
+              $ref: '#/components/schemas/DaySchedule'
+            thursday:
+              $ref: '#/components/schemas/DaySchedule'
+            friday:
+              $ref: '#/components/schemas/DaySchedule'
+            saturday:
+              $ref: '#/components/schemas/DaySchedule'
+            sunday:
+              $ref: '#/components/schemas/DaySchedule'
+        contact:
+          type: object
+          properties:
+            manager:
+              type: string
+            phone:
+              type: string
+            email:
+              type: string
+              format: email
+        metadata:
+          type: object
+          additionalProperties: true
+        resourceCount:
+          type: object
+          properties:
+            zones:
+              type: integer
+            cameras:
+              type: integer
+            doors:
+              type: integer
+            users:
+              type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateSiteRequest:
+      type: object
+      required:
+        - name
+        - type
+        - address
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        code:
+          type: string
+          pattern: '^[A-Z0-9]{2,10}$'
+        type:
+          type: string
+          enum: [headquarters, branch, warehouse, retail, datacenter, other]
+        address:
+          $ref: '#/components/schemas/Address'
+        coordinates:
+          type: object
+          properties:
+            latitude:
+              type: number
+            longitude:
+              type: number
+        timezone:
+          type: string
+        operatingHours:
+          type: object
+          properties:
+            monday:
+              $ref: '#/components/schemas/DaySchedule'
+            tuesday:
+              $ref: '#/components/schemas/DaySchedule'
+            wednesday:
+              $ref: '#/components/schemas/DaySchedule'
+            thursday:
+              $ref: '#/components/schemas/DaySchedule'
+            friday:
+              $ref: '#/components/schemas/DaySchedule'
+            saturday:
+              $ref: '#/components/schemas/DaySchedule'
+            sunday:
+              $ref: '#/components/schemas/DaySchedule'
+        contact:
+          type: object
+          properties:
+            manager:
+              type: string
+            phone:
+              type: string
+            email:
+              type: string
+              format: email
+        metadata:
+          type: object
+          additionalProperties: true
+
+    UpdateSiteRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, maintenance]
+        address:
+          $ref: '#/components/schemas/Address'
+        coordinates:
+          type: object
+          properties:
+            latitude:
+              type: number
+            longitude:
+              type: number
+        timezone:
+          type: string
+        operatingHours:
+          type: object
+        contact:
+          type: object
+          properties:
+            manager:
+              type: string
+            phone:
+              type: string
+            email:
+              type: string
+              format: email
+
+    Zone:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        siteId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+        type:
+          type: string
+          enum: [floor, building, area, parking, perimeter, restricted]
+        floor:
+          type: integer
+          description: Floor number if applicable
+        securityLevel:
+          type: string
+          enum: [public, low, medium, high, critical]
+        boundaries:
+          type: object
+          description: GeoJSON or floor plan coordinates
+        metadata:
+          type: object
+          additionalProperties: true
+        resourceCount:
+          type: object
+          properties:
+            cameras:
+              type: integer
+            doors:
+              type: integer
+            sensors:
+              type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateZoneRequest:
+      type: object
+      required:
+        - name
+        - type
+        - securityLevel
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        code:
+          type: string
+          pattern: '^[A-Z0-9]{2,10}$'
+        type:
+          type: string
+          enum: [floor, building, area, parking, perimeter, restricted]
+        floor:
+          type: integer
+        securityLevel:
+          type: string
+          enum: [public, low, medium, high, critical]
+        boundaries:
+          type: object
+        metadata:
+          type: object
+          additionalProperties: true
+
+    UpdateZoneRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        securityLevel:
+          type: string
+          enum: [public, low, medium, high, critical]
+        boundaries:
+          type: object
+        metadata:
+          type: object
+
+    TenantSettings:
+      type: object
+      properties:
+        general:
+          type: object
+          properties:
+            companyLogo:
+              type: string
+              format: uri
+            primaryColor:
+              type: string
+              pattern: '^#[0-9A-Fa-f]{6}$'
+            secondaryColor:
+              type: string
+              pattern: '^#[0-9A-Fa-f]{6}$'
+            dateFormat:
+              type: string
+            timeFormat:
+              type: string
+              enum: [12h, 24h]
+            weekStart:
+              type: string
+              enum: [sunday, monday]
+        security:
+          type: object
+          properties:
+            passwordPolicy:
+              type: object
+              properties:
+                minLength:
+                  type: integer
+                  minimum: 8
+                requireUppercase:
+                  type: boolean
+                requireLowercase:
+                  type: boolean
+                requireNumbers:
+                  type: boolean
+                requireSpecialChars:
+                  type: boolean
+                expirationDays:
+                  type: integer
+            sessionTimeout:
+              type: integer
+              description: Minutes of inactivity
+            mfaRequired:
+              type: boolean
+            allowedIpRanges:
+              type: array
+              items:
+                type: string
+                description: CIDR notation
+        notifications:
+          type: object
+          properties:
+            emailEnabled:
+              type: boolean
+            smsEnabled:
+              type: boolean
+            pushEnabled:
+              type: boolean
+            webhookUrl:
+              type: string
+              format: uri
+        retention:
+          type: object
+          properties:
+            videoRetentionDays:
+              type: integer
+              minimum: 1
+              maximum: 365
+            eventRetentionDays:
+              type: integer
+              minimum: 30
+              maximum: 730
+            auditLogRetentionDays:
+              type: integer
+              minimum: 90
+              maximum: 2555
+        integration:
+          type: object
+          properties:
+            ssoEnabled:
+              type: boolean
+            ssoProvider:
+              type: string
+              enum: [saml, oauth, openid]
+            ssoConfig:
+              type: object
+            apiKeysEnabled:
+              type: boolean
+
+    UpdateTenantSettingsRequest:
+      type: object
+      properties:
+        general:
+          type: object
+        security:
+          type: object
+        notifications:
+          type: object
+        retention:
+          type: object
+        integration:
+          type: object
+
+    LicenseInfo:
+      type: object
+      properties:
+        licenseKey:
+          type: string
+          description: Partially masked license key
+        type:
+          type: string
+          enum: [trial, subscription, perpetual]
+        plan:
+          type: string
+          enum: [starter, professional, enterprise, custom]
+        status:
+          type: string
+          enum: [active, expired, suspended]
+        features:
+          type: array
+          items:
+            type: string
+            enum: [
+              video_analytics,
+              facial_recognition,
+              license_plate_recognition,
+              advanced_reporting,
+              api_access,
+              mobile_apps,
+              cloud_storage,
+              edge_analytics,
+              unlimited_users,
+              unlimited_sites
+            ]
+        limits:
+          type: object
+          properties:
+            users:
+              type: integer
+            sites:
+              type: integer
+            cameras:
+              type: integer
+            doors:
+              type: integer
+            storageGB:
+              type: integer
+            apiCallsPerMonth:
+              type: integer
+        issuedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        nextBillingDate:
+          type: string
+          format: date-time
+
+    UpdateLicenseRequest:
+      type: object
+      properties:
+        licenseKey:
+          type: string
+        plan:
+          type: string
+          enum: [starter, professional, enterprise, custom]
+
+    ResourceUsage:
+      type: object
+      properties:
+        users:
+          type: object
+          properties:
+            current:
+              type: integer
+            limit:
+              type: integer
+            percentage:
+              type: number
+        sites:
+          type: object
+          properties:
+            current:
+              type: integer
+            limit:
+              type: integer
+            percentage:
+              type: number
+        cameras:
+          type: object
+          properties:
+            current:
+              type: integer
+            limit:
+              type: integer
+            percentage:
+              type: number
+        doors:
+          type: object
+          properties:
+            current:
+              type: integer
+            limit:
+              type: integer
+            percentage:
+              type: number
+        storage:
+          type: object
+          properties:
+            currentGB:
+              type: number
+            limitGB:
+              type: integer
+            percentage:
+              type: number
+        apiCalls:
+          type: object
+          properties:
+            currentMonth:
+              type: integer
+            limitMonth:
+              type: integer
+            percentage:
+              type: number
+        bandwidth:
+          type: object
+          properties:
+            currentMbps:
+              type: number
+            peakMbps:
+              type: number
+            limitMbps:
+              type: integer
+
+    ResourceLimits:
+      type: object
+      properties:
+        users:
+          type: integer
+        sites:
+          type: integer
+        cameras:
+          type: integer
+        doors:
+          type: integer
+        storageGB:
+          type: integer
+        apiCallsPerMonth:
+          type: integer
+        bandwidthMbps:
+          type: integer
+        retentionDays:
+          type: object
+          properties:
+            video:
+              type: integer
+            events:
+              type: integer
+            auditLogs:
+              type: integer
+
+    UpdateResourceLimitsRequest:
+      type: object
+      properties:
+        users:
+          type: integer
+          minimum: 1
+        sites:
+          type: integer
+          minimum: 1
+        cameras:
+          type: integer
+          minimum: 0
+        doors:
+          type: integer
+          minimum: 0
+        storageGB:
+          type: integer
+          minimum: 10
+        apiCallsPerMonth:
+          type: integer
+          minimum: 1000
+        bandwidthMbps:
+          type: integer
+          minimum: 10
+
+    StartOnboardingRequest:
+      type: object
+      properties:
+        steps:
+          type: array
+          items:
+            type: string
+            enum: [
+              create_admin_user,
+              configure_sites,
+              setup_integrations,
+              import_data,
+              configure_notifications,
+              training
+            ]
+        skipWelcome:
+          type: boolean
+          default: false
+
+    OnboardingStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [not_started, in_progress, completed, skipped]
+        currentStep:
+          type: string
+        completedSteps:
+          type: array
+          items:
+            type: string
+        remainingSteps:
+          type: array
+          items:
+            type: string
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+
+    Address:
+      type: object
+      required:
+        - street1
+        - city
+        - country
+      properties:
+        street1:
+          type: string
+        street2:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        postalCode:
+          type: string
+        country:
+          type: string
+          pattern: '^[A-Z]{2}$'
+          description: ISO 3166-1 alpha-2 country code
+
+    DaySchedule:
+      type: object
+      properties:
+        isOpen:
+          type: boolean
+        openTime:
+          type: string
+          pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+        closeTime:
+          type: string
+          pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalItems:
+          type: integer
+        totalPages:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+
+  responses:
+    BadRequestError:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    UnauthorizedError:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFoundError:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

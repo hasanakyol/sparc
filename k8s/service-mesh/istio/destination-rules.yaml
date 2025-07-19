@@ -1,0 +1,729 @@
+# API Gateway Destination Rule with Circuit Breaker
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: api-gateway
+  namespace: sparc
+spec:
+  host: api-gateway.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 2000  # Increased for high traffic
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 1000
+        http2MaxRequests: 2000
+        maxRequestsPerConnection: 2
+        h2UpgradePolicy: UPGRADE
+        idleTimeout: 300s
+        useClientProtocol: true
+    loadBalancer:
+      simple: LEAST_REQUEST
+    outlierDetection:
+      consecutive5xxErrors: 5  # Circuit breaker trigger
+      consecutiveGatewayErrors: 5
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: true
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 2000
+        maxPendingRequests: 1000
+        maxRequests: 2000
+        maxRetries: 3
+    retry:
+      attempts: 3
+      perTryTimeout: 5s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+      retryRemoteLocalities: true
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+    trafficPolicy:
+      portLevelSettings:
+      - port:
+          number: 8080
+        connectionPool:
+          tcp:
+            maxConnections: 10  # Health check port limit
+  - name: v2
+    labels:
+      version: v2
+---
+# Auth Service Destination Rule with Enhanced Circuit Breaker
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: auth-service
+  namespace: sparc
+spec:
+  host: auth-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 1000
+        connectTimeout: 5s
+      http:
+        http1MaxPendingRequests: 500
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 2
+        h2UpgradePolicy: UPGRADE
+        idleTimeout: 60s
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 3  # Strict for auth service
+      consecutiveGatewayErrors: 3
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+      splitExternalLocalOriginErrors: true
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 1000
+        maxPendingRequests: 500
+        maxRequests: 1000
+        maxRetries: 2
+    retry:
+      attempts: 2  # Limited retries for auth
+      perTryTimeout: 3s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+    tls:
+      mode: ISTIO_MUTUAL
+      sni: auth-service.sparc.svc.cluster.local
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+  - name: v2
+    labels:
+      version: v2
+---
+# Video Management Service Destination Rule - optimized for streaming
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: video-processor
+  namespace: sparc
+spec:
+  host: video-management-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 2000
+        connectTimeout: 30s
+      http:
+        http1MaxPendingRequests: 2000
+        http2MaxRequests: 5000  # Higher for video streams
+        maxRequestsPerConnection: 1
+        h2UpgradePolicy: UPGRADE
+        useClientProtocol: true
+        idleTimeout: 900s  # 15 minutes for long streams
+    loadBalancer:
+      consistentHash:
+        httpCookie:
+          name: "video-session"
+          ttl: 3600s
+    outlierDetection:
+      consecutive5xxErrors: 10  # More tolerant for video
+      interval: 30s
+      baseEjectionTime: 60s
+      maxEjectionPercent: 30
+      minHealthPercent: 50
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 5000
+        maxPendingRequests: 2000
+        maxRequests: 5000
+        maxRetries: 1  # Minimal retries for video
+    retry:
+      attempts: 1
+      perTryTimeout: 60s
+      retryOn: connect-failure,refused-stream
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+  - name: v2
+    labels:
+      version: v2
+---
+# Access Control Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: access-control-service
+  namespace: sparc
+spec:
+  host: access-control-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 800
+        connectTimeout: 5s
+      http:
+        http1MaxPendingRequests: 400
+        http2MaxRequests: 800
+        maxRequestsPerConnection: 2
+        h2UpgradePolicy: UPGRADE
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 15s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 800
+        maxPendingRequests: 400
+        maxRequests: 800
+        maxRetries: 3
+    retry:
+      attempts: 3
+      perTryTimeout: 5s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Analytics Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: analytics-service
+  namespace: sparc
+spec:
+  host: analytics-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 600
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 300
+        http2MaxRequests: 600
+        maxRequestsPerConnection: 2
+        idleTimeout: 300s
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 20s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 600
+        maxPendingRequests: 300
+        maxRequests: 600
+        maxRetries: 3
+    retry:
+      attempts: 3
+      perTryTimeout: 30s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+  - name: v2
+    labels:
+      version: v2
+---
+# Device Management Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: device-management-service
+  namespace: sparc
+spec:
+  host: device-management-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 500
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 250
+        http2MaxRequests: 500
+        maxRequestsPerConnection: 2
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 20s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 500
+        maxPendingRequests: 250
+        maxRequests: 500
+        maxRetries: 3
+    retry:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Event Processing Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: event-processing-service
+  namespace: sparc
+spec:
+  host: event-processing-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 1000
+        connectTimeout: 5s
+      http:
+        http1MaxPendingRequests: 500
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 2
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 15s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 1000
+        maxPendingRequests: 500
+        maxRequests: 1000
+        maxRetries: 3
+    retry:
+      attempts: 3
+      perTryTimeout: 5s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Mobile Credential Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: mobile-credential-service
+  namespace: sparc
+spec:
+  host: mobile-credential-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 400
+        connectTimeout: 5s
+      http:
+        http1MaxPendingRequests: 200
+        http2MaxRequests: 400
+        maxRequestsPerConnection: 2
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 20s
+      baseEjectionTime: 30s
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 400
+        maxPendingRequests: 200
+        maxRequests: 400
+        maxRetries: 3
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Tenant Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: tenant-service
+  namespace: sparc
+spec:
+  host: tenant-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 600
+        connectTimeout: 5s
+      http:
+        http1MaxPendingRequests: 300
+        http2MaxRequests: 600
+        maxRequestsPerConnection: 2
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 20s
+      baseEjectionTime: 30s
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 600
+        maxPendingRequests: 300
+        maxRequests: 600
+        maxRetries: 3
+    retry:
+      attempts: 3
+      perTryTimeout: 5s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Visitor Management Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: visitor-management-service
+  namespace: sparc
+spec:
+  host: visitor-management-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 400
+        connectTimeout: 5s
+      http:
+        http1MaxPendingRequests: 200
+        http2MaxRequests: 400
+        maxRequestsPerConnection: 2
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 20s
+      baseEjectionTime: 30s
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 400
+        maxPendingRequests: 200
+        maxRequests: 400
+        maxRetries: 3
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Reporting Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: reporting-service
+  namespace: sparc
+spec:
+  host: reporting-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 300
+        connectTimeout: 30s  # Longer for report generation
+      http:
+        http1MaxPendingRequests: 150
+        http2MaxRequests: 300
+        maxRequestsPerConnection: 1
+        idleTimeout: 600s  # 10 minutes for long reports
+    loadBalancer:
+      simple: LEAST_REQUEST
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 60s
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 300
+        maxPendingRequests: 150
+        maxRequests: 300
+        maxRetries: 2
+    retry:
+      attempts: 2
+      perTryTimeout: 60s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Alert Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: alert-service
+  namespace: sparc
+spec:
+  host: alert-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 800
+        connectTimeout: 3s  # Fast for alerts
+      http:
+        http1MaxPendingRequests: 400
+        http2MaxRequests: 800
+        maxRequestsPerConnection: 2
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 3  # Strict for critical alerts
+      interval: 10s
+      baseEjectionTime: 30s
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 800
+        maxPendingRequests: 400
+        maxRequests: 800
+        maxRetries: 5  # More retries for critical alerts
+    retry:
+      attempts: 5
+      perTryTimeout: 3s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Environmental Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: environmental-service
+  namespace: sparc
+spec:
+  host: environmental-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 300
+        connectTimeout: 5s
+      http:
+        http1MaxPendingRequests: 150
+        http2MaxRequests: 300
+        maxRequestsPerConnection: 2
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 300
+        maxPendingRequests: 150
+        maxRequests: 300
+        maxRetries: 3
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Integration Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: integration-service
+  namespace: sparc
+spec:
+  host: integration-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 500
+        connectTimeout: 15s  # Longer for external integrations
+      http:
+        http1MaxPendingRequests: 250
+        http2MaxRequests: 500
+        maxRequestsPerConnection: 1
+    loadBalancer:
+      simple: LEAST_REQUEST
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 60s
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 500
+        maxPendingRequests: 250
+        maxRequests: 500
+        maxRetries: 3
+    retry:
+      attempts: 3
+      perTryTimeout: 15s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Maintenance Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: maintenance-service
+  namespace: sparc
+spec:
+  host: maintenance-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 200
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 200
+        maxRequestsPerConnection: 2
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 60s  # Less critical service
+      baseEjectionTime: 60s
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 200
+        maxPendingRequests: 100
+        maxRequests: 200
+        maxRetries: 3
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# Security Compliance Service Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: security-compliance-service
+  namespace: sparc
+spec:
+  host: security-compliance-service.sparc.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 300
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 150
+        http2MaxRequests: 300
+        maxRequestsPerConnection: 2
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 300
+        maxPendingRequests: 150
+        maxRequests: 300
+        maxRetries: 3
+    retry:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+---
+# PostgreSQL Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: postgresql
+  namespace: database
+spec:
+  host: postgresql.database.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 200  # Connection pool for database
+        connectTimeout: 30s
+    loadBalancer:
+      simple: ROUND_ROBIN  # Distribute across read replicas
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      splitExternalLocalOriginErrors: true
+---
+# Redis Destination Rule
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: redis
+  namespace: database
+spec:
+  host: redis.database.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 500  # Higher for cache
+        connectTimeout: 5s  # Fast timeout for cache
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 15s
+      baseEjectionTime: 30s
+      splitExternalLocalOriginErrors: true
+---
+# Global default circuit breaker for all services
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: circuit-breaker-default
+  namespace: istio-system
+spec:
+  host: "*.local"
+  exportTo:
+  - "*"
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+        h2UpgradePolicy: UPGRADE
+        idleTimeout: 300s
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutiveErrors: 5
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: true
+    circuitBreaker:
+      simpleCb:
+        maxConnections: 100
+        maxPendingRequests: 50
+        maxRequests: 100
+        maxRetries: 3
+    retry:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+      retryRemoteLocalities: true

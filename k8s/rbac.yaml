@@ -1,0 +1,752 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sparc
+  labels:
+    name: sparc
+    app.kubernetes.io/name: sparc
+    app.kubernetes.io/part-of: sparc-platform
+---
+# ServiceAccount for Auth Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: auth-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: auth-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-auth-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for API Gateway
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-gateway
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-api-gateway-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for Tenant Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tenant-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: tenant-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-tenant-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for Access Control Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: access-control-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: access-control-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-access-control-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for Video Management Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: video-management-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: video-management-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-video-management-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for Event Processing Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: event-processing-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: event-processing-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-event-processing-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for Device Management Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: device-management-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-device-management-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for Mobile Credential Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mobile-credential-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: mobile-credential-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-mobile-credential-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for Analytics Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: analytics-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: analytics-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-analytics-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for Environmental Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: environmental-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: environmental-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-environmental-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for Visitor Management Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: visitor-management-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: visitor-management-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-visitor-management-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# ServiceAccount for Reporting Service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: reporting-service
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: reporting-service
+    app.kubernetes.io/part-of: sparc-platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-reporting-service-role
+    eks.amazonaws.com/sts-regional-endpoints: "true"
+automountServiceAccountToken: true
+---
+# Role for basic service operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: sparc
+  name: sparc-service-basic
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["get", "list", "watch"]
+---
+# Role for services that need to manage pods (like device management)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: sparc
+  name: sparc-pod-manager
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+---
+# Role for services that need to create/manage secrets (like auth service)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: sparc
+  name: sparc-secret-manager
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["get", "list", "watch"]
+---
+# Role for event processing service that needs broader access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: sparc
+  name: sparc-event-processor
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["replicasets"]
+  verbs: ["get", "list", "watch"]
+---
+# ClusterRole for services that need cross-namespace monitoring
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sparc-cluster-monitor
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes/metrics"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+---
+# ClusterRole for analytics service to access metrics across namespaces
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sparc-analytics-cluster
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+---
+# RoleBinding for Auth Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auth-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: auth-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-secret-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for API Gateway
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: api-gateway-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: api-gateway
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-service-basic
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for Tenant Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: tenant-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-secret-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for Access Control Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: access-control-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: access-control-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-service-basic
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for Video Management Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: video-management-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: video-management-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-service-basic
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for Event Processing Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: event-processing-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: event-processing-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-event-processor
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for Device Management Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: device-management-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: device-management-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-pod-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for Mobile Credential Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mobile-credential-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: mobile-credential-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-service-basic
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for Analytics Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: analytics-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: analytics-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-service-basic
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for Environmental Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: environmental-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: environmental-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-service-basic
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for Visitor Management Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: visitor-management-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: visitor-management-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-service-basic
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for Reporting Service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: reporting-service-binding
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: reporting-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: sparc-service-basic
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRoleBinding for Analytics Service (cross-namespace monitoring)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: analytics-service-cluster-binding
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: analytics-service
+  namespace: sparc
+roleRef:
+  kind: ClusterRole
+  name: sparc-analytics-cluster
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRoleBinding for Event Processing Service (cluster monitoring)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: event-processing-service-cluster-binding
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: event-processing-service
+  namespace: sparc
+roleRef:
+  kind: ClusterRole
+  name: sparc-cluster-monitor
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRoleBinding for Device Management Service (cluster monitoring)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: device-management-service-cluster-binding
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+subjects:
+- kind: ServiceAccount
+  name: device-management-service
+  namespace: sparc
+roleRef:
+  kind: ClusterRole
+  name: sparc-cluster-monitor
+  apiGroup: rbac.authorization.k8s.io
+---
+# NetworkPolicy for sparc namespace isolation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sparc-network-policy
+  namespace: sparc
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    - namespaceSelector:
+        matchLabels:
+          name: aws-load-balancer-controller
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 443
+  egress:
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 5432
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 9200
+    - protocol: UDP
+      port: 53
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+---
+# PodSecurityPolicy for SPARC services
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: sparc-psp
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: false
+---
+# ClusterRole for PodSecurityPolicy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sparc-psp-user
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs: ['use']
+  resourceNames:
+  - sparc-psp
+---
+# ClusterRoleBinding for PodSecurityPolicy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sparc-psp-binding
+  labels:
+    app.kubernetes.io/part-of: sparc-platform
+roleRef:
+  kind: ClusterRole
+  name: sparc-psp-user
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: auth-service
+  namespace: sparc
+- kind: ServiceAccount
+  name: api-gateway
+  namespace: sparc
+- kind: ServiceAccount
+  name: tenant-service
+  namespace: sparc
+- kind: ServiceAccount
+  name: access-control-service
+  namespace: sparc
+- kind: ServiceAccount
+  name: video-management-service
+  namespace: sparc
+- kind: ServiceAccount
+  name: event-processing-service
+  namespace: sparc
+- kind: ServiceAccount
+  name: device-management-service
+  namespace: sparc
+- kind: ServiceAccount
+  name: mobile-credential-service
+  namespace: sparc
+- kind: ServiceAccount
+  name: analytics-service
+  namespace: sparc
+- kind: ServiceAccount
+  name: environmental-service
+  namespace: sparc
+- kind: ServiceAccount
+  name: visitor-management-service
+  namespace: sparc
+- kind: ServiceAccount
+  name: reporting-service
+  namespace: sparc

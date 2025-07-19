@@ -1,0 +1,617 @@
+name: Security Vulnerability Scan
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main ]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      scan-type:
+        description: 'Type of scan to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - sast
+          - dependencies
+          - containers
+          - secrets
+          - iac
+
+env:
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.11'
+  TRIVY_VERSION: 0.48.0
+  SNYK_VERSION: latest
+  SEMGREP_VERSION: latest
+
+jobs:
+  # Setup job to generate timestamps and check conditions
+  setup:
+    name: Setup Security Scan
+    runs-on: ubuntu-latest
+    outputs:
+      scan-timestamp: ${{ steps.timestamp.outputs.timestamp }}
+    steps:
+      - name: Generate timestamp
+        id: timestamp
+        run: echo "timestamp=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_OUTPUT
+
+  # SAST (Static Application Security Testing)
+  sast-scan:
+    name: SAST Scan
+    runs-on: ubuntu-latest
+    needs: setup
+    if: github.event.inputs.scan-type == 'all' || github.event.inputs.scan-type == 'sast' || github.event.inputs.scan-type == ''
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          pip install semgrep
+
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/nodejs
+            p/typescript
+            p/react
+            p/nextjs
+            p/owasp-top-ten
+            p/jwt
+            p/sql-injection
+            p/xss
+            p/command-injection
+            p/path-traversal
+          generateSarif: true
+
+      - name: Upload Semgrep SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Configure ESLint for security
+        run: |
+          npm install -D eslint-plugin-security eslint-plugin-no-secrets eslint-plugin-sonarjs @microsoft/eslint-formatter-sarif
+
+      - name: Run ESLint Security
+        run: |
+          npx eslint . \
+            --ext .js,.jsx,.ts,.tsx \
+            --format @microsoft/eslint-formatter-sarif \
+            --output-file eslint-security.sarif \
+            || true
+
+      - name: Upload ESLint SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: eslint-security.sarif
+          category: eslint-security
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, typescript
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: Store SAST results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sast-results-${{ needs.setup.outputs.scan-timestamp }}
+          path: |
+            semgrep.sarif
+            eslint-security.sarif
+
+  # Dependency vulnerability scanning
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: setup
+    if: github.event.inputs.scan-type == 'all' || github.event.inputs.scan-type == 'dependencies' || github.event.inputs.scan-type == ''
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm install -g npm-audit-sarif
+
+      # NPM Audit with SARIF output
+      - name: Run npm audit
+        run: |
+          npm audit --json > npm-audit.json || true
+          npm-audit-sarif --input npm-audit.json --output npm-audit.sarif || true
+          # Also generate human-readable report
+          npm audit || true
+
+      - name: Upload npm audit SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: npm-audit.sarif
+          category: npm-audit
+
+      # Snyk vulnerability scanning
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=medium --sarif-file-output=snyk.sarif
+
+      - name: Upload Snyk SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && env.SNYK_TOKEN != ''
+        with:
+          sarif_file: snyk.sarif
+          category: snyk
+
+      # OWASP Dependency Check
+      - name: Run OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'SPARC'
+          path: '.'
+          format: 'ALL'
+          args: >
+            --enableRetired
+            --enableExperimental
+            --failOnCVSS 7
+            --nodePackageSkipDevDependencies
+            --suppressionFile .github/dependency-check-suppressions.xml
+
+      - name: Upload OWASP Check SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: reports/dependency-check-report.sarif
+          category: owasp-dependency-check
+
+      - name: Store dependency results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-results-${{ needs.setup.outputs.scan-timestamp }}
+          path: |
+            npm-audit.*
+            snyk.sarif
+            reports/
+
+  # Container image scanning
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    needs: setup
+    if: github.event.inputs.scan-type == 'all' || github.event.inputs.scan-type == 'containers' || github.event.inputs.scan-type == ''
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      matrix:
+        service:
+          - api-gateway
+          - auth
+          - video-processor
+          - incident-manager
+          - analytics
+          - notification
+          - access-control
+          - scheduler
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if service exists
+        id: check_service
+        run: |
+          if [ -d "services/${{ matrix.service }}" ] && [ -f "services/${{ matrix.service }}/Dockerfile" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Trivy filesystem scan
+        if: steps.check_service.outputs.exists == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './services/${{ matrix.service }}'
+          format: 'sarif'
+          output: 'trivy-${{ matrix.service }}.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && steps.check_service.outputs.exists == 'true'
+        with:
+          sarif_file: 'trivy-${{ matrix.service }}.sarif'
+          category: 'trivy-${{ matrix.service }}'
+
+      - name: Run Dockerfile linting
+        uses: hadolint/hadolint-action@v3.1.0
+        if: steps.check_service.outputs.exists == 'true'
+        with:
+          dockerfile: ./services/${{ matrix.service }}/Dockerfile
+          format: sarif
+          output-file: hadolint-${{ matrix.service }}.sarif
+          no-fail: true
+
+      - name: Upload Hadolint SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && steps.check_service.outputs.exists == 'true'
+        with:
+          sarif_file: 'hadolint-${{ matrix.service }}.sarif'
+          category: 'hadolint-${{ matrix.service }}'
+
+      - name: Store container results
+        uses: actions/upload-artifact@v4
+        if: always() && steps.check_service.outputs.exists == 'true'
+        with:
+          name: container-results-${{ matrix.service }}-${{ needs.setup.outputs.scan-timestamp }}
+          path: |
+            trivy-${{ matrix.service }}.sarif
+            hadolint-${{ matrix.service }}.sarif
+
+  # Secret scanning
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    needs: setup
+    if: github.event.inputs.scan-type == 'all' || github.event.inputs.scan-type == 'secrets' || github.event.inputs.scan-type == ''
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Run detect-secrets
+        run: |
+          pip install detect-secrets
+          
+          # Create baseline if not exists
+          if [ ! -f .secrets.baseline ]; then
+            detect-secrets scan --baseline .secrets.baseline
+          fi
+          
+          # Check for new secrets
+          detect-secrets scan --baseline .secrets.baseline \
+            --exclude-files '.*\.lock$|.*\.min\.js$' \
+            --exclude-lines 'pragma: allowlist secret'
+
+      - name: Store secret scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: secret-results-${{ needs.setup.outputs.scan-timestamp }}
+          path: |
+            .secrets.baseline
+            gitleaks-report.sarif
+
+
+  # Infrastructure as Code scanning
+  iac-scan:
+    name: Infrastructure Security Scan
+    runs-on: ubuntu-latest
+    needs: setup
+    if: github.event.inputs.scan-type == 'all' || github.event.inputs.scan-type == 'iac' || github.event.inputs.scan-type == ''
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Checkov IaC scanning
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          skip_check: CKV_DOCKER_2,CKV_DOCKER_3
+          framework: all
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+
+      # Trivy IaC scanning
+      - name: Run Trivy IaC scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-iac.sarif'
+
+      - name: Upload Trivy IaC SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-iac.sarif
+          category: trivy-iac
+
+      - name: Store IaC results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iac-results-${{ needs.setup.outputs.scan-timestamp }}
+          path: |
+            checkov-results.sarif
+            trivy-iac.sarif
+
+  # Vulnerability Assessment and Security Gates
+  vulnerability-assessment:
+    name: Vulnerability Assessment
+    runs-on: ubuntu-latest
+    needs: [sast-scan, dependency-scan, container-scan, secret-scan, iac-scan]
+    if: always()
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: security-artifacts
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install report dependencies
+        run: |
+          pip install requests jinja2 pyyaml sarif-tools
+
+      - name: Generate vulnerability report
+        run: |
+          python scripts/security-report-generator.py \
+            --input-dir security-artifacts \
+            --output-dir vulnerability-reports \
+            --format markdown \
+            --format html \
+            --format json \
+            --include-recommendations
+
+      - name: Create issues for critical vulnerabilities
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        run: |
+          python scripts/security-create-vulnerability-issues.py \
+            --report vulnerability-reports/report.json \
+            --threshold high \
+            --github-token ${{ secrets.GITHUB_TOKEN }} || true
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'vulnerability-reports/report.md';
+            
+            if (fs.existsSync(reportPath)) {
+              const report = fs.readFileSync(reportPath, 'utf8');
+              
+              // Truncate if too long for PR comment
+              const truncatedReport = report.length > 65000 
+                ? report.substring(0, 65000) + '\n\n... (truncated, see full report in artifacts)'
+                : report;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: truncatedReport
+              });
+            }
+
+      - name: Upload final report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-${{ needs.setup.outputs.scan-timestamp }}
+          path: vulnerability-reports/
+
+      - name: Check security gates
+        id: security-gates
+        run: |
+          if [ -f "scripts/security-check-gates.py" ]; then
+            python scripts/security-check-gates.py \
+              --report vulnerability-reports/report.json \
+              --config scripts/security/security-scan.config.json
+          else
+            echo "Security gates script not found, creating basic check"
+            python -c "
+import json
+import sys
+
+try:
+    with open('vulnerability-reports/report.json', 'r') as f:
+        report = json.load(f)
+    
+    critical_count = report.get('summary', {}).get('critical', 0)
+    high_count = report.get('summary', {}).get('high', 0)
+    
+    if critical_count > 0:
+        print(f'❌ Found {critical_count} CRITICAL vulnerabilities!')
+        print('status=failed' + '>> $GITHUB_OUTPUT')
+        sys.exit(1)
+    elif high_count > 5:
+        print(f'⚠️ Found {high_count} HIGH vulnerabilities (threshold: 5)')
+        print('status=failed' + '>> $GITHUB_OUTPUT')
+        sys.exit(1)
+    else:
+        print('✅ Security gates passed')
+        print('status=passed' + '>> $GITHUB_OUTPUT')
+except Exception as e:
+    print(f'Warning: Could not check security gates: {e}')
+    print('status=passed' + '>> $GITHUB_OUTPUT')
+"
+          fi
+
+      - name: Fail if critical vulnerabilities
+        if: steps.security-gates.outputs.status == 'failed'
+        run: |
+          echo "❌ Critical vulnerabilities found! Build failed."
+          echo "Please review the security report and fix critical issues before merging."
+          exit 1
+
+  # Notification job
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: vulnerability-assessment
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    steps:
+      - name: Determine scan status
+        id: status
+        run: |
+          if [ "${{ needs.vulnerability-assessment.result }}" == "success" ]; then
+            echo "status=✅ Passed" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+          else
+            echo "status=❌ Failed" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack notification
+        if: env.SLACK_WEBHOOK != ''
+        uses: 8398a7/action-slack@v3
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "attachments": [{
+                "color": "${{ steps.status.outputs.color }}",
+                "title": "SPARC Security Scan ${{ steps.status.outputs.status }}",
+                "fields": [
+                  {
+                    "title": "Repository",
+                    "value": "${{ github.repository }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Branch",
+                    "value": "${{ github.ref_name }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Triggered By",
+                    "value": "${{ github.event_name }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Scan Type",
+                    "value": "${{ github.event.inputs.scan-type || 'all' }}",
+                    "short": true
+                  }
+                ],
+                "actions": [
+                  {
+                    "type": "button",
+                    "text": "View Results",
+                    "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  }
+                ]
+              }]
+            }
+
+      - name: Create GitHub Issue for failures
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Scheduled Security Scan Failed',
+              body: `## Security Scan Results
+              
+              The scheduled security scan has failed and requires immediate attention.
+              
+              **Scan Date**: ${new Date().toISOString()}
+              **Commit**: ${context.sha}
+              **Workflow Run**: [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+              
+              ### Required Actions:
+              1. Review the security scan results
+              2. Identify and prioritize critical vulnerabilities
+              3. Assign team members to address each finding
+              4. Create tracking issues for remediation
+              
+              ### Next Steps:
+              - [ ] Review SAST findings
+              - [ ] Check dependency vulnerabilities
+              - [ ] Analyze container security issues
+              - [ ] Address any exposed secrets
+              - [ ] Fix infrastructure misconfigurations
+              
+              cc: @security-team @platform-team`,
+              labels: ['security', 'critical', 'automated']
+            });

@@ -1,0 +1,583 @@
+# Pod Security Policies for SPARC Platform
+# Implements strict security controls for all pods
+
+---
+# Restricted Pod Security Policy (Default)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: sparc-restricted
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/allowedProfileNames: 'runtime/default'
+    seccomp.security.alpha.kubernetes.io/defaultProfileName: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/defaultProfileName: 'runtime/default'
+spec:
+  # Privilege Escalation
+  privileged: false
+  allowPrivilegeEscalation: false
+  
+  # Required to prevent escalations to root
+  requiredDropCapabilities:
+    - ALL
+  
+  # Allow core volume types
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  
+  # Restrict host access
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  
+  # Require running as non-root user
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+    ranges:
+      - min: 1000
+        max: 65535
+  
+  # SELinux
+  seLinux:
+    rule: 'RunAsAny'
+  
+  # Supplemental groups
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1000
+        max: 65535
+  
+  # FSGroup
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1000
+        max: 65535
+  
+  # Read-only root filesystem
+  readOnlyRootFilesystem: true
+  
+  # Forbid host ports
+  hostPorts: []
+  
+  # Allow specific Linux capabilities if needed
+  allowedCapabilities: []
+  
+  # Unsafe sysctls are not allowed
+  forbiddenSysctls:
+    - "*"
+
+---
+# Baseline Pod Security Policy (For system components)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: sparc-baseline
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: 'runtime/default,localhost/*'
+    apparmor.security.beta.kubernetes.io/allowedProfileNames: 'runtime/default'
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  
+  requiredDropCapabilities:
+    - ALL
+  
+  # Additional capabilities for system components
+  allowedCapabilities:
+    - 'NET_BIND_SERVICE'
+    - 'NET_RAW'
+  
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+    - 'hostPath'  # Required for some system components
+  
+  # Allow specific host paths for monitoring
+  allowedHostPaths:
+    - pathPrefix: "/var/log"
+      readOnly: true
+    - pathPrefix: "/var/lib/docker"
+      readOnly: true
+    - pathPrefix: "/sys"
+      readOnly: true
+    - pathPrefix: "/proc"
+      readOnly: true
+  
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  
+  runAsUser:
+    rule: 'RunAsAny'
+  
+  seLinux:
+    rule: 'RunAsAny'
+  
+  supplementalGroups:
+    rule: 'RunAsAny'
+  
+  fsGroup:
+    rule: 'RunAsAny'
+  
+  readOnlyRootFilesystem: false
+  
+  # Allow specific host ports for ingress
+  hostPorts:
+    - min: 80
+      max: 80
+    - min: 443
+      max: 443
+
+---
+# Privileged Pod Security Policy (For specific system components only)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: sparc-privileged
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: '*'
+spec:
+  privileged: true
+  allowPrivilegeEscalation: true
+  
+  allowedCapabilities:
+    - '*'
+  
+  volumes:
+    - '*'
+  
+  hostNetwork: true
+  hostIPC: true
+  hostPID: true
+  
+  hostPorts:
+    - min: 0
+      max: 65535
+  
+  runAsUser:
+    rule: 'RunAsAny'
+  
+  seLinux:
+    rule: 'RunAsAny'
+  
+  supplementalGroups:
+    rule: 'RunAsAny'
+  
+  fsGroup:
+    rule: 'RunAsAny'
+  
+  readOnlyRootFilesystem: false
+
+---
+# ClusterRole for restricted PSP
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sparc-restricted-psp-user
+rules:
+  - apiGroups: ['policy']
+    resources: ['podsecuritypolicies']
+    verbs: ['use']
+    resourceNames:
+      - sparc-restricted
+
+---
+# ClusterRole for baseline PSP
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sparc-baseline-psp-user
+rules:
+  - apiGroups: ['policy']
+    resources: ['podsecuritypolicies']
+    verbs: ['use']
+    resourceNames:
+      - sparc-baseline
+
+---
+# ClusterRole for privileged PSP
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sparc-privileged-psp-user
+rules:
+  - apiGroups: ['policy']
+    resources: ['podsecuritypolicies']
+    verbs: ['use']
+    resourceNames:
+      - sparc-privileged
+
+---
+# Bind restricted PSP to all service accounts by default
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sparc-restricted-psp-all
+roleRef:
+  kind: ClusterRole
+  name: sparc-restricted-psp-user
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: Group
+    name: system:serviceaccounts
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: system:authenticated
+    apiGroup: rbac.authorization.k8s.io
+
+---
+# Bind baseline PSP to system namespace service accounts
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sparc-baseline-psp-system
+  namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: sparc-baseline-psp-user
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: Group
+    name: system:serviceaccounts:kube-system
+    apiGroup: rbac.authorization.k8s.io
+
+---
+# Bind baseline PSP to monitoring namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sparc-baseline-psp-monitoring
+  namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: sparc-baseline-psp-user
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: Group
+    name: system:serviceaccounts:monitoring
+    apiGroup: rbac.authorization.k8s.io
+
+---
+# Security Context Constraints (for OpenShift compatibility)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: sparc-restricted-scc
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 65535
+priority: null
+readOnlyRootFilesystem: true
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 65535
+users: []
+groups:
+  - system:authenticated
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+
+---
+# Network Security Context
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: network-security-context
+  namespace: sparc
+data:
+  iptables.rules: |
+    # Default policies
+    *filter
+    :INPUT DROP [0:0]
+    :FORWARD DROP [0:0]
+    :OUTPUT ACCEPT [0:0]
+    
+    # Allow loopback
+    -A INPUT -i lo -j ACCEPT
+    
+    # Allow established connections
+    -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    
+    # Allow Kubernetes health checks
+    -A INPUT -p tcp --dport 10250 -j ACCEPT
+    -A INPUT -p tcp --dport 10255 -j ACCEPT
+    
+    # Allow application ports
+    -A INPUT -p tcp --dport 3000:3999 -j ACCEPT
+    
+    # Allow DNS
+    -A INPUT -p udp --dport 53 -j ACCEPT
+    -A INPUT -p tcp --dport 53 -j ACCEPT
+    
+    # Log and drop everything else
+    -A INPUT -j LOG --log-prefix "DROPPED: "
+    -A INPUT -j DROP
+    
+    COMMIT
+
+---
+# Resource Quota for security
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: security-quota
+  namespace: sparc
+spec:
+  hard:
+    requests.cpu: "100"
+    requests.memory: "200Gi"
+    limits.cpu: "200"
+    limits.memory: "400Gi"
+    persistentvolumeclaims: "20"
+    services.loadbalancers: "5"
+    services.nodeports: "0"  # Disable NodePort services
+
+---
+# Limit Range for security
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: security-limits
+  namespace: sparc
+spec:
+  limits:
+  - default:
+      cpu: "1"
+      memory: "1Gi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    max:
+      cpu: "4"
+      memory: "8Gi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+    type: Container
+  - max:
+      storage: "10Gi"
+    min:
+      storage: "1Gi"
+    type: PersistentVolumeClaim
+
+---
+# Admission Controller Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: admission-control-config
+  namespace: kube-system
+data:
+  admission-control.yaml: |
+    apiVersion: apiserver.config.k8s.io/v1
+    kind: AdmissionConfiguration
+    plugins:
+    - name: PodSecurity
+      configuration:
+        apiVersion: pod-security.admission.config.k8s.io/v1
+        kind: PodSecurityConfiguration
+        defaults:
+          enforce: "restricted"
+          enforce-version: "latest"
+          audit: "restricted"
+          audit-version: "latest"
+          warn: "restricted"
+          warn-version: "latest"
+        exemptions:
+          usernames: []
+          runtimeClasses: []
+          namespaces: ["kube-system", "kube-public", "kube-node-lease"]
+
+---
+# OPA (Open Policy Agent) Policies
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policies
+  namespace: opa-system
+data:
+  sparc-security.rego: |
+    package kubernetes.admission
+    
+    import data.kubernetes.namespaces
+    
+    # Deny containers without security context
+    deny[msg] {
+      input.request.kind.kind == "Pod"
+      container := input.request.object.spec.containers[_]
+      not container.securityContext.runAsNonRoot
+      msg := sprintf("Container %v must run as non-root user", [container.name])
+    }
+    
+    # Deny containers with privileged access
+    deny[msg] {
+      input.request.kind.kind == "Pod"
+      container := input.request.object.spec.containers[_]
+      container.securityContext.privileged
+      msg := sprintf("Container %v must not run in privileged mode", [container.name])
+    }
+    
+    # Deny containers without resource limits
+    deny[msg] {
+      input.request.kind.kind == "Pod"
+      container := input.request.object.spec.containers[_]
+      not container.resources.limits.memory
+      msg := sprintf("Container %v must specify memory limits", [container.name])
+    }
+    
+    deny[msg] {
+      input.request.kind.kind == "Pod"
+      container := input.request.object.spec.containers[_]
+      not container.resources.limits.cpu
+      msg := sprintf("Container %v must specify CPU limits", [container.name])
+    }
+    
+    # Deny images from untrusted registries
+    deny[msg] {
+      input.request.kind.kind == "Pod"
+      container := input.request.object.spec.containers[_]
+      not starts_with(container.image, "sparc/")
+      not starts_with(container.image, "gcr.io/sparc-platform/")
+      not starts_with(container.image, "docker.io/library/")
+      msg := sprintf("Container %v uses untrusted image %v", [container.name, container.image])
+    }
+    
+    # Deny latest tag
+    deny[msg] {
+      input.request.kind.kind == "Pod"
+      container := input.request.object.spec.containers[_]
+      endswith(container.image, ":latest")
+      msg := sprintf("Container %v must not use 'latest' tag", [container.name])
+    }
+    
+    # Require specific labels
+    deny[msg] {
+      input.request.kind.kind == "Pod"
+      not input.request.object.metadata.labels["app.kubernetes.io/name"]
+      msg := "Pod must have label 'app.kubernetes.io/name'"
+    }
+    
+    deny[msg] {
+      input.request.kind.kind == "Pod"
+      not input.request.object.metadata.labels["app.kubernetes.io/version"]
+      msg := "Pod must have label 'app.kubernetes.io/version'"
+    }
+
+---
+# Falco Rules for Runtime Security
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-rules
+  namespace: falco-system
+data:
+  sparc_rules.yaml: |
+    - rule: Unauthorized Process in Container
+      desc: Detect unauthorized process execution in containers
+      condition: >
+        container and proc.name not in (allowed_processes)
+      output: >
+        Unauthorized process started in container
+        (user=%user.name container=%container.name process=%proc.name parent=%proc.pname cmdline=%proc.cmdline)
+      priority: WARNING
+      tags: [container, process, security]
+      
+    - list: allowed_processes
+      items: [node, npm, yarn, sh, bash, cat, ls, cp, mv, mkdir, rm, grep, awk, sed]
+    
+    - rule: Write below binary dir
+      desc: Detect write below binary directories
+      condition: >
+        container and evt.dir = < and 
+        (fd.name startswith /bin/ or
+         fd.name startswith /sbin/ or
+         fd.name startswith /usr/bin/ or
+         fd.name startswith /usr/sbin/)
+      output: >
+        Binary directory write attempt
+        (user=%user.name container=%container.name file=%fd.name)
+      priority: ERROR
+      tags: [container, filesystem, security]
+    
+    - rule: Sensitive file access
+      desc: Detect access to sensitive files
+      condition: >
+        container and
+        (fd.name in (sensitive_files) or
+         fd.directory in (sensitive_dirs))
+      output: >
+        Sensitive file access
+        (user=%user.name container=%container.name file=%fd.name)
+      priority: WARNING
+      tags: [container, filesystem, security]
+    
+    - list: sensitive_files
+      items: [/etc/shadow, /etc/passwd, /etc/sudoers, /root/.ssh/id_rsa]
+    
+    - list: sensitive_dirs
+      items: [/root, /etc/ssl, /etc/pki]
+    
+    - rule: Container shell spawned
+      desc: Detect shell spawned in container
+      condition: >
+        container and
+        proc.name in (shell_binaries) and
+        proc.pname != containerd-shim
+      output: >
+        Shell spawned in container
+        (user=%user.name container=%container.name shell=%proc.name parent=%proc.pname)
+      priority: NOTICE
+      tags: [container, shell, security]
+    
+    - list: shell_binaries
+      items: [ash, bash, csh, ksh, sh, tcsh, zsh, dash]
+    
+    - rule: Outbound connection to suspicious IP
+      desc: Detect outbound connections to suspicious IPs
+      condition: >
+        container and
+        outbound and
+        not fd.sip in (allowed_ips)
+      output: >
+        Suspicious outbound connection
+        (user=%user.name container=%container.name connection=%fd.name destination=%fd.sip)
+      priority: WARNING
+      tags: [container, network, security]
+    
+    - list: allowed_ips
+      items: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]

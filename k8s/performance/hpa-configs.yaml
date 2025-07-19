@@ -1,0 +1,315 @@
+---
+# Enhanced HPA configuration for API Gateway with custom metrics
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa-enhanced
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: sparc
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  minReplicas: 5
+  maxReplicas: 100
+  metrics:
+  # CPU-based scaling
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  # Memory-based scaling
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+  # Custom metrics for request rate
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "1000"
+  # Custom metrics for response time
+  - type: Pods
+    pods:
+      metric:
+        name: http_request_duration_p95
+      target:
+        type: AverageValue
+        averageValue: "200m" # 200ms
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 20
+        periodSeconds: 60
+      - type: Pods
+        value: 5
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 10
+        periodSeconds: 30
+      selectPolicy: Max
+
+---
+# HPA for Video Management Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: video-management-hpa-enhanced
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: video-management-service
+    app.kubernetes.io/component: video
+    app.kubernetes.io/part-of: sparc
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: video-management-service
+  minReplicas: 10
+  maxReplicas: 200
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # GPU utilization metric
+  - type: Pods
+    pods:
+      metric:
+        name: gpu_utilization
+      target:
+        type: AverageValue
+        averageValue: "80"
+  # Stream count metric
+  - type: Pods
+    pods:
+      metric:
+        name: active_video_streams
+      target:
+        type: AverageValue
+        averageValue: "500"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600 # 10 minutes for video services
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 120
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 20
+        periodSeconds: 60
+
+---
+# HPA for Analytics Service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: analytics-service-hpa-enhanced
+  namespace: sparc
+  labels:
+    app.kubernetes.io/name: analytics-service
+    app.kubernetes.io/component: analytics
+    app.kubernetes.io/part-of: sparc
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: analytics-service
+  minReplicas: 3
+  maxReplicas: 50
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 85
+  # Queue depth metric
+  - type: External
+    external:
+      metric:
+        name: analytics_queue_depth
+        selector:
+          matchLabels:
+            queue: analytics
+      target:
+        type: AverageValue
+        averageValue: "100"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+
+---
+# Vertical Pod Autoscaler for API Gateway
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: api-gateway-vpa
+  namespace: sparc
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: api-gateway
+      minAllowed:
+        cpu: 200m
+        memory: 256Mi
+      maxAllowed:
+        cpu: 2
+        memory: 2Gi
+      controlledResources: ["cpu", "memory"]
+
+---
+# Cluster Autoscaler configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-autoscaler-config
+  namespace: kube-system
+data:
+  nodes.max: "500"
+  nodes.min: "10"
+  scale-down-delay-after-add: "10m"
+  scale-down-unneeded-time: "10m"
+  scale-down-utilization-threshold: "0.5"
+  skip-nodes-with-local-storage: "false"
+  skip-nodes-with-system-pods: "false"
+  balance-similar-node-groups: "true"
+  expander: "least-waste"
+
+---
+# Priority Classes for critical services
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: sparc-critical
+value: 1000
+globalDefault: false
+description: "Critical SPARC services that must not be evicted"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: sparc-high
+value: 900
+globalDefault: false
+description: "High priority SPARC services"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: sparc-medium
+value: 500
+globalDefault: true
+description: "Medium priority SPARC services (default)"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: sparc-low
+value: 100
+globalDefault: false
+description: "Low priority SPARC services that can be evicted"
+
+---
+# Resource Quotas for namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sparc-quota
+  namespace: sparc
+spec:
+  hard:
+    requests.cpu: "1000"
+    requests.memory: "1000Gi"
+    limits.cpu: "2000"
+    limits.memory: "2000Gi"
+    persistentvolumeclaims: "100"
+    services.loadbalancers: "10"
+    services.nodeports: "50"
+
+---
+# LimitRange for default resources
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: sparc-limitrange
+  namespace: sparc
+spec:
+  limits:
+  - default:
+      cpu: "1"
+      memory: "1Gi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+    max:
+      cpu: "4"
+      memory: "8Gi"
+    type: Container
+  - min:
+      storage: "1Gi"
+    max:
+      storage: "100Gi"
+    type: PersistentVolumeClaim

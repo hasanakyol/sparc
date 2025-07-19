@@ -1,0 +1,126 @@
+name: Generate API Documentation
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'services/**/routes/**'
+      - 'packages/shared/src/openapi/**'
+      - 'scripts/generate-api-docs.ts'
+  pull_request:
+    paths:
+      - 'services/**/routes/**'
+      - 'packages/shared/src/openapi/**'
+  workflow_dispatch:
+    inputs:
+      include_postman:
+        description: 'Generate Postman collection'
+        required: false
+        default: 'true'
+        type: boolean
+      output_format:
+        description: 'Output format'
+        required: false
+        default: 'json'
+        type: choice
+        options:
+          - json
+          - yaml
+          - html
+
+jobs:
+  generate-docs:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build shared packages
+        run: yarn build:packages
+
+      - name: Start services in background
+        run: |
+          docker-compose up -d postgres redis
+          yarn dev:services &
+          sleep 30  # Wait for services to start
+
+      - name: Generate API documentation
+        run: |
+          POSTMAN_FLAG=""
+          if [[ "${{ github.event.inputs.include_postman || 'true' }}" == "true" ]]; then
+            POSTMAN_FLAG="--postman"
+          fi
+          
+          FORMAT="${{ github.event.inputs.output_format || 'json' }}"
+          
+          yarn docs:generate --output ./docs/api --format $FORMAT $POSTMAN_FLAG
+
+      - name: Upload documentation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-documentation
+          path: docs/api/
+          retention-days: 30
+
+      - name: Update documentation branch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Create or switch to docs branch
+          git checkout -B gh-pages
+          
+          # Copy documentation
+          cp -r docs/api/* .
+          
+          # Commit and push
+          git add .
+          git commit -m "Update API documentation - $(date)"
+          git push origin gh-pages --force
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = JSON.parse(fs.readFileSync('docs/api/summary.json', 'utf8'));
+            
+            const comment = `## 📚 API Documentation Generated
+            
+            **Summary:**
+            - Total Services: ${summary.totalServices}
+            - Services with OpenAPI: ${summary.servicesWithOpenAPI}
+            - Total Endpoints: ${summary.totalEndpoints}
+            
+            **Services:**
+            ${summary.services.map(s => `- ${s.name}: ${s.endpoints} endpoints`).join('\n')}
+            
+            [Download Documentation Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Stop services
+        if: always()
+        run: |
+          pkill -f "yarn dev:services" || true
+          docker-compose down

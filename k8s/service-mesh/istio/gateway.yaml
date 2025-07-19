@@ -1,0 +1,214 @@
+# Main Istio Gateway for SPARC Platform
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: sparc-gateway
+  namespace: istio-ingress
+  labels:
+    app: istio-gateway
+    version: v1
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  # HTTP server - redirects to HTTPS
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*.sparc.io"
+    - "*.sparc.com"  # Support multiple domains
+    tls:
+      httpsRedirect: true
+  # HTTPS server for main API
+  - port:
+      number: 443
+      name: https-api
+      protocol: HTTPS
+    hosts:
+    - "api.sparc.io"
+    - "api.sparc.com"
+    - "api-staging.sparc.io"
+    - "api-staging.sparc.com"
+    tls:
+      mode: SIMPLE
+      credentialName: api-sparc-io-cert
+      minProtocolVersion: TLSV1_2
+      maxProtocolVersion: TLSV1_3
+      cipherSuites:
+      - ECDHE-ECDSA-AES256-GCM-SHA384
+      - ECDHE-RSA-AES256-GCM-SHA384
+      - ECDHE-ECDSA-AES128-GCM-SHA256
+      - ECDHE-RSA-AES128-GCM-SHA256
+  # HTTPS server for video streaming with HTTP/2
+  - port:
+      number: 443
+      name: https-stream
+      protocol: HTTPS
+    hosts:
+    - "stream.sparc.io"
+    - "stream.sparc.com"
+    - "video.sparc.io"
+    - "video.sparc.com"
+    tls:
+      mode: SIMPLE
+      credentialName: stream-sparc-io-cert
+      minProtocolVersion: TLSV1_2
+      maxProtocolVersion: TLSV1_3
+      # HTTP/2 optimizations for streaming
+      alpnProtocols:
+      - h2
+      - http/1.1
+  # HTTPS server for WebSocket connections
+  - port:
+      number: 443
+      name: https-ws
+      protocol: HTTPS
+    hosts:
+    - "ws.sparc.io"
+    - "ws.sparc.com"
+    - "realtime.sparc.io"
+    - "realtime.sparc.com"
+    tls:
+      mode: SIMPLE
+      credentialName: ws-sparc-io-cert
+      minProtocolVersion: TLSV1_2
+      maxProtocolVersion: TLSV1_3
+      # WebSocket specific settings
+      alpnProtocols:
+      - http/1.1  # WebSocket works over HTTP/1.1
+  # gRPC server for microservice communication
+  - port:
+      number: 443
+      name: grpc
+      protocol: GRPC
+    hosts:
+    - "grpc.sparc.io"
+    - "grpc.sparc.com"
+    - "rpc.sparc.io"
+    - "rpc.sparc.com"
+    tls:
+      mode: SIMPLE
+      credentialName: grpc-sparc-io-cert
+      minProtocolVersion: TLSV1_2
+      maxProtocolVersion: TLSV1_3
+      # gRPC requires HTTP/2
+      alpnProtocols:
+      - h2
+  # Health check endpoint (no TLS)
+  - port:
+      number: 8080
+      name: health
+      protocol: HTTP
+    hosts:
+    - "*"
+---
+# Internal mesh gateway for service-to-service communication
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: sparc-mesh-gateway
+  namespace: sparc
+  labels:
+    app: mesh-gateway
+    version: v1
+spec:
+  selector:
+    app: sparc-mesh-gateway
+  servers:
+  # Internal HTTP traffic
+  - port:
+      number: 80
+      name: http-internal
+      protocol: HTTP
+    hosts:
+    - "*.sparc.local"
+    - "*.sparc.svc.cluster.local"
+  # Internal gRPC traffic
+  - port:
+      number: 9090
+      name: grpc-internal
+      protocol: GRPC
+    hosts:
+    - "*.sparc.local"
+    - "*.sparc.svc.cluster.local"
+---
+# Egress gateway for external API calls
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: sparc-egress-gateway
+  namespace: istio-system
+  labels:
+    app: egress-gateway
+    version: v1
+spec:
+  selector:
+    istio: egressgateway
+  servers:
+  # HTTPS egress for cloud services
+  - port:
+      number: 443
+      name: tls-cloud
+      protocol: TLS
+    hosts:
+    # AWS services
+    - "*.amazonaws.com"
+    - "*.aws.amazon.com"
+    # Google Cloud services
+    - "*.googleapis.com"
+    - "*.google.com"
+    # Azure services
+    - "*.azure.com"
+    - "*.microsoft.com"
+    - "*.microsoftonline.com"
+    # Other external services
+    - "*.auth0.com"
+    - "*.okta.com"
+    - "*.twilio.com"
+    - "*.sendgrid.net"
+    - "*.stripe.com"
+    tls:
+      mode: PASSTHROUGH
+  # HTTP egress (will be upgraded to HTTPS)
+  - port:
+      number: 80
+      name: http-external
+      protocol: HTTP
+    hosts:
+    - "*"
+---
+# Admin Gateway for internal tools
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: sparc-admin-gateway
+  namespace: istio-ingress
+  labels:
+    app: admin-gateway
+    version: v1
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  # HTTPS server for admin tools
+  - port:
+      number: 443
+      name: https-admin
+      protocol: HTTPS
+    hosts:
+    - "admin.sparc.io"
+    - "grafana.sparc.io"
+    - "prometheus.sparc.io"
+    - "jaeger.sparc.io"
+    - "kiali.sparc.io"
+    tls:
+      mode: SIMPLE
+      credentialName: admin-sparc-io-cert
+      minProtocolVersion: TLSV1_2
+      maxProtocolVersion: TLSV1_3
+      # Strong ciphers for admin access
+      cipherSuites:
+      - ECDHE-ECDSA-AES256-GCM-SHA384
+      - ECDHE-RSA-AES256-GCM-SHA384

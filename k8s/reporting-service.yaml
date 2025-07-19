@@ -1,0 +1,434 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reporting-service-config
+  labels:
+    app: reporting-service
+    component: config
+data:
+  NODE_ENV: "production"
+  PORT: "3009"
+  LOG_LEVEL: "info"
+  METRICS_PORT: "9090"
+  HEALTH_CHECK_PORT: "8080"
+  # Report generation settings
+  MAX_REPORT_SIZE_MB: "100"
+  REPORT_TIMEOUT_SECONDS: "300"
+  PDF_GENERATION_TIMEOUT: "120"
+  CONCURRENT_REPORTS_LIMIT: "10"
+  # Email configuration
+  SMTP_HOST: "smtp.amazonaws.com"
+  SMTP_PORT: "587"
+  SMTP_SECURE: "true"
+  EMAIL_FROM: "noreply@sparc-platform.com"
+  # Storage configuration
+  REPORT_STORAGE_BUCKET: "sparc-reports"
+  REPORT_RETENTION_DAYS: "90"
+  TEMP_STORAGE_PATH: "/tmp/reports"
+  # Template configuration
+  TEMPLATE_CACHE_SIZE: "50"
+  TEMPLATE_REFRESH_INTERVAL: "3600"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reporting-service
+  labels:
+    app: reporting-service
+    component: backend
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: reporting-service
+  template:
+    metadata:
+      labels:
+        app: reporting-service
+        component: backend
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: reporting-service
+        image: sparc/reporting-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3009
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: database-secret
+              key: url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: redis-secret
+              key: url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: jwt-secret
+              key: secret
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: aws-secret
+              key: access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-secret
+              key: secret-access-key
+        - name: SMTP_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: smtp-secret
+              key: username
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: smtp-secret
+              key: password
+        envFrom:
+        - configMapRef:
+            name: reporting-service-config
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /startup
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        volumeMounts:
+        - name: temp-storage
+          mountPath: /tmp/reports
+        - name: report-templates
+          mountPath: /app/templates
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: temp-storage
+        emptyDir:
+          sizeLimit: 5Gi
+      - name: report-templates
+        configMap:
+          name: report-templates
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reporting-service
+  labels:
+    app: reporting-service
+    component: backend
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3009
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: reporting-service
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: reporting-service-hpa
+  labels:
+    app: reporting-service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: reporting-service
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: reporting-service-pdb
+  labels:
+    app: reporting-service
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: reporting-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: reporting-service-network-policy
+  labels:
+    app: reporting-service
+spec:
+  podSelector:
+    matchLabels:
+      app: reporting-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          app: auth-service
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 3009
+    - protocol: TCP
+      port: 9090
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow database access
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow Redis access
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow SMTP email delivery
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 587
+    - protocol: TCP
+      port: 465
+    - protocol: TCP
+      port: 25
+  # Allow HTTPS for external storage (S3)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow HTTP for health checks and internal communication
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: reporting-service-monitor
+  labels:
+    app: reporting-service
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: reporting-service
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+    - default
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: reporting-service-alerts
+  labels:
+    app: reporting-service
+    release: prometheus
+spec:
+  groups:
+  - name: reporting-service.rules
+    rules:
+    - alert: ReportingServiceDown
+      expr: up{job="reporting-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: reporting-service
+      annotations:
+        summary: "Reporting service is down"
+        description: "Reporting service has been down for more than 1 minute"
+    
+    - alert: ReportingServiceHighErrorRate
+      expr: rate(http_requests_total{job="reporting-service",status=~"5.."}[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        service: reporting-service
+      annotations:
+        summary: "High error rate in reporting service"
+        description: "Reporting service error rate is {{ $value }} errors per second"
+    
+    - alert: ReportingServiceHighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="reporting-service"}[5m])) > 30
+      for: 5m
+      labels:
+        severity: warning
+        service: reporting-service
+      annotations:
+        summary: "High latency in reporting service"
+        description: "95th percentile latency is {{ $value }}s"
+    
+    - alert: ReportingServiceHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"reporting-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: reporting-service
+      annotations:
+        summary: "High memory usage in reporting service"
+        description: "Memory usage is above 90%"
+    
+    - alert: ReportGenerationTimeout
+      expr: increase(report_generation_timeouts_total[5m]) > 0
+      for: 1m
+      labels:
+        severity: warning
+        service: reporting-service
+      annotations:
+        summary: "Report generation timeouts detected"
+        description: "{{ $value }} report generation timeouts in the last 5 minutes"
+    
+    - alert: ReportQueueBacklog
+      expr: report_queue_size > 50
+      for: 5m
+      labels:
+        severity: warning
+        service: reporting-service
+      annotations:
+        summary: "Large report generation queue"
+        description: "Report queue has {{ $value }} pending reports"
+    
+    - alert: EmailDeliveryFailure
+      expr: increase(email_delivery_failures_total[5m]) > 5
+      for: 2m
+      labels:
+        severity: warning
+        service: reporting-service
+      annotations:
+        summary: "Email delivery failures detected"
+        description: "{{ $value }} email delivery failures in the last 5 minutes"
+    
+    - alert: ReportStorageFailure
+      expr: increase(report_storage_failures_total[5m]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: reporting-service
+      annotations:
+        summary: "Report storage failures detected"
+        description: "{{ $value }} report storage failures in the last 5 minutes"

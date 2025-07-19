@@ -1,0 +1,84 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: encrypted-gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  # Enable encryption at rest
+  encrypted: "true"
+  # KMS key for encryption (will be templated per environment)
+  kmsKeyId: "arn:aws:kms:${AWS_REGION}:${AWS_ACCOUNT_ID}:key/${KMS_KEY_ID}"
+  # Performance parameters
+  iops: "3000"
+  throughput: "125"
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: encrypted-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: io2
+  # Enable encryption at rest
+  encrypted: "true"
+  # KMS key for encryption
+  kmsKeyId: "arn:aws:kms:${AWS_REGION}:${AWS_ACCOUNT_ID}:key/${KMS_KEY_ID}"
+  # High performance for databases
+  iops: "10000"
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+
+---
+# Encrypted storage for PostgreSQL
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-encrypted-pvc
+  namespace: database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: encrypted-ssd
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# Encrypted storage for video files
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: video-storage-encrypted-pvc
+  namespace: video-processing
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: encrypted-gp3
+  resources:
+    requests:
+      storage: 1Ti
+
+---
+# Encrypted storage for backups
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-storage-encrypted-pvc
+  namespace: backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: encrypted-gp3
+  resources:
+    requests:
+      storage: 500Gi

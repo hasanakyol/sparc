@@ -1,0 +1,1292 @@
+openapi: 3.0.3
+info:
+  title: SPARC Video Management Service
+  description: |
+    The SPARC Video Management Service handles all video-related operations including camera management,
+    live streaming, recording, playback, and video analytics integration.
+    
+    ## Core Features
+    
+    - Camera and video source management
+    - Live video streaming (HLS, WebRTC, RTSP)
+    - Video recording and storage
+    - Playback with timeline navigation
+    - Video export and clip generation
+    - Analytics integration
+    - Motion detection and alerts
+    - PTZ (Pan-Tilt-Zoom) camera control
+    - Multi-stream support (high/low quality)
+    
+    ## Video Formats
+    
+    - **Live Streaming**: HLS, WebRTC, RTSP proxy
+    - **Recording**: H.264/H.265 MP4 files
+    - **Export**: MP4, AVI, MKV formats
+    - **Snapshots**: JPEG, PNG
+    
+    ## Storage Management
+    
+    - Configurable retention policies
+    - Automatic space management
+    - Cloud storage integration (S3, Azure Blob)
+    - Local and edge storage support
+  version: 1.0.0
+  contact:
+    name: SPARC Video Team
+    email: video@sparc.security
+    url: https://sparc.security/support
+
+servers:
+  - url: https://api.sparc.security/v1/video
+    description: Production
+  - url: https://staging-api.sparc.security/v1/video
+    description: Staging
+  - url: http://localhost:3002
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Cameras
+    description: Camera management operations
+  - name: Streams
+    description: Live video streaming
+  - name: Recordings
+    description: Video recording operations
+  - name: Playback
+    description: Recorded video playback
+  - name: Export
+    description: Video export and clip generation
+  - name: Analytics
+    description: Video analytics integration
+  - name: PTZ
+    description: PTZ camera control
+  - name: Health
+    description: Service health checks
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Get service health
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /cameras:
+    get:
+      tags:
+        - Cameras
+      summary: List cameras
+      description: Returns all cameras accessible to the current user
+      operationId: listCameras
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: siteId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by site
+        - in: query
+          name: zoneId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by zone
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [online, offline, recording, error]
+          description: Filter by status
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [fixed, ptz, thermal, fisheye, multi-sensor]
+          description: Filter by camera type
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of cameras
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cameras:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Camera'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    post:
+      tags:
+        - Cameras
+      summary: Add camera
+      description: Adds a new camera to the system
+      operationId: addCamera
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCameraRequest'
+      responses:
+        '201':
+          description: Camera created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Camera'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '409':
+          description: Camera already exists
+
+  /cameras/{cameraId}:
+    get:
+      tags:
+        - Cameras
+      summary: Get camera details
+      operationId: getCamera
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Camera details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Camera'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags:
+        - Cameras
+      summary: Update camera
+      operationId: updateCamera
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCameraRequest'
+      responses:
+        '200':
+          description: Camera updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Camera'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags:
+        - Cameras
+      summary: Delete camera
+      operationId: deleteCamera
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '204':
+          description: Camera deleted successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /cameras/{cameraId}/snapshot:
+    get:
+      tags:
+        - Cameras
+      summary: Get camera snapshot
+      description: Returns the latest snapshot from the camera
+      operationId: getCameraSnapshot
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: width
+          schema:
+            type: integer
+            minimum: 160
+            maximum: 3840
+          description: Snapshot width
+        - in: query
+          name: height
+          schema:
+            type: integer
+            minimum: 120
+            maximum: 2160
+          description: Snapshot height
+        - in: query
+          name: quality
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 85
+          description: JPEG quality
+      responses:
+        '200':
+          description: Camera snapshot
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '503':
+          description: Camera offline or unavailable
+
+  /streams/{cameraId}/live:
+    get:
+      tags:
+        - Streams
+      summary: Get live stream URL
+      description: Returns URLs for live streaming the camera feed
+      operationId: getLiveStream
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: protocol
+          schema:
+            type: string
+            enum: [hls, webrtc, rtsp]
+            default: hls
+          description: Streaming protocol
+        - in: query
+          name: quality
+          schema:
+            type: string
+            enum: [high, medium, low, auto]
+            default: auto
+          description: Stream quality
+      responses:
+        '200':
+          description: Live stream information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveStreamResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '503':
+          description: Stream unavailable
+
+  /streams/{cameraId}/webrtc/offer:
+    post:
+      tags:
+        - Streams
+      summary: Create WebRTC offer
+      description: Creates a WebRTC offer for peer-to-peer streaming
+      operationId: createWebRTCOffer
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                offer:
+                  type: string
+                  description: WebRTC SDP offer
+      responses:
+        '200':
+          description: WebRTC answer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answer:
+                    type: string
+                    description: WebRTC SDP answer
+                  iceServers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        urls:
+                          type: array
+                          items:
+                            type: string
+                        username:
+                          type: string
+                        credential:
+                          type: string
+
+  /recordings:
+    get:
+      tags:
+        - Recordings
+      summary: List recordings
+      description: Returns recordings based on filters
+      operationId: listRecordings
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: cameraId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by camera
+        - in: query
+          name: startTime
+          schema:
+            type: string
+            format: date-time
+          required: true
+          description: Start of time range
+        - in: query
+          name: endTime
+          schema:
+            type: string
+            format: date-time
+          required: true
+          description: End of time range
+        - in: query
+          name: hasEvents
+          schema:
+            type: boolean
+          description: Only recordings with events
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of recordings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recordings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Recording'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /recordings/{recordingId}:
+    get:
+      tags:
+        - Recordings
+      summary: Get recording details
+      operationId: getRecording
+      parameters:
+        - $ref: '#/components/parameters/RecordingId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Recording details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recording'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags:
+        - Recordings
+      summary: Delete recording
+      operationId: deleteRecording
+      parameters:
+        - $ref: '#/components/parameters/RecordingId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '204':
+          description: Recording deleted successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /recordings/{recordingId}/stream:
+    get:
+      tags:
+        - Playback
+      summary: Get playback stream
+      description: Returns streaming URL for recorded video playback
+      operationId: getPlaybackStream
+      parameters:
+        - $ref: '#/components/parameters/RecordingId'
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: startOffset
+          schema:
+            type: integer
+            minimum: 0
+          description: Start offset in seconds
+        - in: query
+          name: endOffset
+          schema:
+            type: integer
+            minimum: 0
+          description: End offset in seconds
+        - in: query
+          name: speed
+          schema:
+            type: number
+            enum: [0.25, 0.5, 1, 2, 4, 8]
+            default: 1
+          description: Playback speed
+      responses:
+        '200':
+          description: Playback stream information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackStreamResponse'
+
+  /recordings/{recordingId}/timeline:
+    get:
+      tags:
+        - Playback
+      summary: Get recording timeline
+      description: Returns timeline with events and motion data
+      operationId: getRecordingTimeline
+      parameters:
+        - $ref: '#/components/parameters/RecordingId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Recording timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimelineResponse'
+
+  /exports:
+    post:
+      tags:
+        - Export
+      summary: Create video export
+      description: Creates a video export job for downloading clips
+      operationId: createExport
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExportRequest'
+      responses:
+        '202':
+          description: Export job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    get:
+      tags:
+        - Export
+      summary: List export jobs
+      operationId: listExports
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, processing, completed, failed]
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of export jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exports:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExportJob'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /exports/{exportId}:
+    get:
+      tags:
+        - Export
+      summary: Get export job status
+      operationId: getExport
+      parameters:
+        - in: path
+          name: exportId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Export job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /exports/{exportId}/download:
+    get:
+      tags:
+        - Export
+      summary: Download exported video
+      operationId: downloadExport
+      parameters:
+        - in: path
+          name: exportId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Video file
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /cameras/{cameraId}/ptz:
+    post:
+      tags:
+        - PTZ
+      summary: Control PTZ camera
+      description: Sends PTZ control commands to the camera
+      operationId: controlPTZ
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PTZCommand'
+      responses:
+        '200':
+          description: Command executed successfully
+        '400':
+          description: Invalid command or camera doesn't support PTZ
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /cameras/{cameraId}/ptz/presets:
+    get:
+      tags:
+        - PTZ
+      summary: List PTZ presets
+      operationId: listPTZPresets
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: List of PTZ presets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  presets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PTZPreset'
+
+  /analytics/cameras/{cameraId}/motion:
+    get:
+      tags:
+        - Analytics
+      summary: Get motion analytics
+      description: Returns motion detection data for a camera
+      operationId: getMotionAnalytics
+      parameters:
+        - $ref: '#/components/parameters/CameraId'
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: startTime
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: endTime
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: granularity
+          schema:
+            type: string
+            enum: [minute, hour, day]
+            default: hour
+      responses:
+        '200':
+          description: Motion analytics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotionAnalyticsResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TenantId:
+      in: header
+      name: X-Tenant-ID
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Tenant identifier
+
+    CameraId:
+      in: path
+      name: cameraId
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Camera identifier
+
+    RecordingId:
+      in: path
+      name: recordingId
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Recording identifier
+
+    PageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: Number of items per page
+
+    PageNumber:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: Page number
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        services:
+          type: object
+          properties:
+            database:
+              type: string
+            storage:
+              type: string
+            streaming:
+              type: string
+
+    Camera:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [fixed, ptz, thermal, fisheye, multi-sensor]
+        manufacturer:
+          type: string
+        model:
+          type: string
+        serialNumber:
+          type: string
+        macAddress:
+          type: string
+        ipAddress:
+          type: string
+        connectionUrl:
+          type: string
+          description: RTSP/HTTP URL
+        status:
+          type: string
+          enum: [online, offline, recording, error]
+        siteId:
+          type: string
+          format: uuid
+        zoneId:
+          type: string
+          format: uuid
+        location:
+          type: object
+          properties:
+            latitude:
+              type: number
+            longitude:
+              type: number
+            floor:
+              type: integer
+            building:
+              type: string
+        capabilities:
+          type: object
+          properties:
+            ptz:
+              type: boolean
+            audio:
+              type: boolean
+            analytics:
+              type: boolean
+            nightVision:
+              type: boolean
+            resolution:
+              type: string
+              example: "1920x1080"
+            framerate:
+              type: integer
+        recordingSettings:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            continuous:
+              type: boolean
+            motionOnly:
+              type: boolean
+            scheduleId:
+              type: string
+              format: uuid
+            retentionDays:
+              type: integer
+            quality:
+              type: string
+              enum: [high, medium, low]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateCameraRequest:
+      type: object
+      required:
+        - name
+        - connectionUrl
+        - siteId
+        - zoneId
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        connectionUrl:
+          type: string
+          description: RTSP/HTTP URL
+        username:
+          type: string
+          description: Camera credentials
+        password:
+          type: string
+          description: Camera credentials
+        type:
+          type: string
+          enum: [fixed, ptz, thermal, fisheye, multi-sensor]
+        manufacturer:
+          type: string
+        model:
+          type: string
+        siteId:
+          type: string
+          format: uuid
+        zoneId:
+          type: string
+          format: uuid
+        location:
+          type: object
+          properties:
+            latitude:
+              type: number
+            longitude:
+              type: number
+            floor:
+              type: integer
+            building:
+              type: string
+        recordingSettings:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              default: true
+            continuous:
+              type: boolean
+              default: true
+            motionOnly:
+              type: boolean
+              default: false
+            retentionDays:
+              type: integer
+              default: 30
+            quality:
+              type: string
+              enum: [high, medium, low]
+              default: high
+
+    UpdateCameraRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        location:
+          type: object
+          properties:
+            latitude:
+              type: number
+            longitude:
+              type: number
+            floor:
+              type: integer
+            building:
+              type: string
+        recordingSettings:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            continuous:
+              type: boolean
+            motionOnly:
+              type: boolean
+            retentionDays:
+              type: integer
+            quality:
+              type: string
+              enum: [high, medium, low]
+
+    LiveStreamResponse:
+      type: object
+      properties:
+        protocol:
+          type: string
+          enum: [hls, webrtc, rtsp]
+        urls:
+          type: object
+          properties:
+            high:
+              type: string
+              description: High quality stream URL
+            medium:
+              type: string
+              description: Medium quality stream URL
+            low:
+              type: string
+              description: Low quality stream URL
+        metadata:
+          type: object
+          properties:
+            resolution:
+              type: string
+            framerate:
+              type: integer
+            bitrate:
+              type: integer
+            codec:
+              type: string
+
+    Recording:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        cameraId:
+          type: string
+          format: uuid
+        cameraName:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        duration:
+          type: integer
+          description: Duration in seconds
+        size:
+          type: integer
+          description: File size in bytes
+        status:
+          type: string
+          enum: [recording, completed, failed]
+        hasEvents:
+          type: boolean
+        eventCount:
+          type: integer
+        thumbnailUrl:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    PlaybackStreamResponse:
+      type: object
+      properties:
+        url:
+          type: string
+          description: HLS streaming URL
+        duration:
+          type: integer
+          description: Total duration in seconds
+        startOffset:
+          type: integer
+        endOffset:
+          type: integer
+        speed:
+          type: number
+
+    TimelineResponse:
+      type: object
+      properties:
+        duration:
+          type: integer
+          description: Total duration in seconds
+        segments:
+          type: array
+          items:
+            type: object
+            properties:
+              startTime:
+                type: integer
+                description: Offset in seconds
+              endTime:
+                type: integer
+                description: Offset in seconds
+              hasMotion:
+                type: boolean
+              events:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    time:
+                      type: integer
+                      description: Offset in seconds
+                    type:
+                      type: string
+                      enum: [motion, person, vehicle, alert]
+                    confidence:
+                      type: number
+                      minimum: 0
+                      maximum: 1
+
+    CreateExportRequest:
+      type: object
+      required:
+        - cameraId
+        - startTime
+        - endTime
+      properties:
+        cameraId:
+          type: string
+          format: uuid
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        format:
+          type: string
+          enum: [mp4, avi, mkv]
+          default: mp4
+        includeAudio:
+          type: boolean
+          default: true
+        watermark:
+          type: boolean
+          default: true
+        quality:
+          type: string
+          enum: [high, medium, low]
+          default: high
+
+    ExportJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        cameraId:
+          type: string
+          format: uuid
+        cameraName:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        format:
+          type: string
+        fileSize:
+          type: integer
+          description: Size in bytes (when completed)
+        downloadUrl:
+          type: string
+          description: Download URL (when completed)
+        expiresAt:
+          type: string
+          format: date-time
+          description: When download URL expires
+        error:
+          type: string
+          description: Error message (if failed)
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+
+    PTZCommand:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [pan, tilt, zoom, home, preset, stop]
+        parameters:
+          oneOf:
+            - type: object
+              properties:
+                direction:
+                  type: string
+                  enum: [left, right, up, down]
+                speed:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+            - type: object
+              properties:
+                x:
+                  type: number
+                  minimum: -1
+                  maximum: 1
+                y:
+                  type: number
+                  minimum: -1
+                  maximum: 1
+                zoom:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+            - type: object
+              properties:
+                presetId:
+                  type: string
+
+    PTZPreset:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        position:
+          type: object
+          properties:
+            pan:
+              type: number
+            tilt:
+              type: number
+            zoom:
+              type: number
+
+    MotionAnalyticsResponse:
+      type: object
+      properties:
+        cameraId:
+          type: string
+          format: uuid
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        granularity:
+          type: string
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              motionLevel:
+                type: number
+                minimum: 0
+                maximum: 100
+                description: Motion intensity percentage
+              regions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    motionLevel:
+                      type: number
+        summary:
+          type: object
+          properties:
+            averageMotion:
+              type: number
+            peakMotion:
+              type: number
+            totalMotionEvents:
+              type: integer
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalItems:
+          type: integer
+        totalPages:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+
+  responses:
+    BadRequestError:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    UnauthorizedError:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFoundError:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

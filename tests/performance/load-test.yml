@@ -1,0 +1,210 @@
+config:
+  target: "https://api.sparc.com"
+  phases:
+    # Warm-up phase
+    - duration: 60
+      arrivalRate: 10
+      name: "Warm-up"
+    
+    # Ramp-up phase
+    - duration: 300
+      arrivalRate: 10
+      rampTo: 1000
+      name: "Ramp-up"
+    
+    # Sustained load phase
+    - duration: 600
+      arrivalRate: 1000
+      name: "Sustained Load"
+    
+    # Spike test phase
+    - duration: 60
+      arrivalRate: 2000
+      name: "Spike Test"
+    
+    # Cool-down phase
+    - duration: 120
+      arrivalRate: 100
+      rampTo: 10
+      name: "Cool-down"
+  
+  # Plugins
+  plugins:
+    expect: {}
+    metrics-by-endpoint: {}
+    statsd:
+      host: "localhost"
+      port: 8125
+      prefix: "sparc.loadtest"
+  
+  # Processor configuration
+  processor: "./tests/performance/processors.js"
+  
+  # Default headers
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+
+scenarios:
+  # API Gateway performance test
+  - name: "API Gateway Performance"
+    weight: 30
+    flow:
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ $randomEmail() }}"
+            password: "{{ $randomPassword() }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+          expect:
+            - statusCode: 200
+            - hasProperty: "token"
+            - contentType: json
+            - maxResponseTime: 200
+      
+      - loop:
+          - get:
+              url: "/api/v1/users/me"
+              headers:
+                Authorization: "Bearer {{ authToken }}"
+              expect:
+                - statusCode: 200
+                - maxResponseTime: 200
+          
+          - get:
+              url: "/api/v1/sites"
+              headers:
+                Authorization: "Bearer {{ authToken }}"
+              expect:
+                - statusCode: 200
+                - maxResponseTime: 200
+        count: 5
+  
+  # Video streaming performance test
+  - name: "Video Streaming Performance"
+    weight: 40
+    flow:
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ $randomEmail() }}"
+            password: "{{ $randomPassword() }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      
+      - get:
+          url: "/api/v1/cameras"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$[0].id"
+              as: "cameraId"
+          expect:
+            - statusCode: 200
+      
+      - ws:
+          url: "/ws/video/{{ cameraId }}"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          send:
+            - type: "start_stream"
+              quality: "high"
+              codec: "h264"
+          expect:
+            - maxLatency: 500
+          think: 30
+  
+  # Analytics query performance test
+  - name: "Analytics Performance"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ $randomEmail() }}"
+            password: "{{ $randomPassword() }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      
+      - post:
+          url: "/api/v1/analytics/query"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            metric: "events_per_hour"
+            timeRange:
+              start: "{{ $randomDate('2024-01-01', '2024-01-31') }}"
+              end: "{{ $randomDate('2024-02-01', '2024-02-28') }}"
+            groupBy: ["site", "zone"]
+          expect:
+            - statusCode: 200
+            - maxResponseTime: 2000
+      
+      - post:
+          url: "/api/v1/analytics/aggregate"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            metrics: ["visitor_count", "alert_count", "incident_count"]
+            interval: "hourly"
+            filters:
+              site: "{{ $randomSite() }}"
+          expect:
+            - statusCode: 200
+            - maxResponseTime: 1000
+  
+  # Batch operations performance test
+  - name: "Batch Operations"
+    weight: 10
+    flow:
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ $randomEmail() }}"
+            password: "{{ $randomPassword() }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      
+      - post:
+          url: "/api/v1/batch"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+            X-Batch-Request: "true"
+          json:
+            operations:
+              - method: "GET"
+                path: "/users/me"
+              - method: "GET"
+                path: "/sites"
+              - method: "GET"
+                path: "/alerts/recent"
+              - method: "GET"
+                path: "/incidents/stats"
+          expect:
+            - statusCode: 200
+            - maxResponseTime: 500
+            - hasProperty: "results"
+            - contentType: json
+
+# Performance thresholds
+thresholds:
+  p95: 200     # 95th percentile should be under 200ms
+  p99: 500     # 99th percentile should be under 500ms
+  errors: 0.01 # Error rate should be under 1%
+
+# Reporting configuration
+reporting:
+  - type: "html"
+    filename: "./reports/performance-test-{{ timestamp }}.html"
+  
+  - type: "json"
+    filename: "./reports/performance-test-{{ timestamp }}.json"
+  
+  - type: "junit"
+    filename: "./reports/performance-test-{{ timestamp }}.xml"

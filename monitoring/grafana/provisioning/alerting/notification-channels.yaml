@@ -1,0 +1,60 @@
+apiVersion: 1
+
+notifiers:
+  - name: Platform Team Slack
+    type: slack
+    uid: platform-slack
+    isDefault: true
+    settings:
+      url: ${SLACK_WEBHOOK_URL}
+      channel: '#sparc-platform-alerts'
+      username: 'Grafana Error Monitor'
+      iconEmoji: ':rotating_light:'
+      uploadImage: true
+      mentionUsers: 'here'
+      mentionGroups: 'platform-oncall'
+
+  - name: SRE PagerDuty
+    type: pagerduty
+    uid: sre-pagerduty
+    settings:
+      integrationKey: ${PAGERDUTY_INTEGRATION_KEY}
+      severity: critical
+      class: error_monitoring
+      component: sparc
+      group: production
+
+  - name: Security Team Email
+    type: email
+    uid: security-email
+    settings:
+      addresses: security-team@sparc.com
+      singleEmail: false
+      
+  - name: Incident Webhook
+    type: webhook
+    uid: incident-webhook
+    settings:
+      url: ${INCIDENT_WEBHOOK_URL}
+      httpMethod: POST
+      contentType: application/json
+
+templates:
+  - name: Error Alert Template
+    template: |
+      {{ define "error.alert" }}
+      *Alert:* {{ .GroupLabels.alertname }}
+      *Severity:* {{ .CommonLabels.severity }}
+      *Service:* {{ .CommonLabels.service }}
+      
+      {{ range .Alerts }}
+      *Status:* {{ .Status }}
+      {{ if .Labels.description }}*Description:* {{ .Labels.description }}{{ end }}
+      {{ if .Labels.runbook_url }}*Runbook:* <{{ .Labels.runbook_url }}|View Runbook>{{ end }}
+      {{ if .Labels.dashboard_url }}*Dashboard:* <{{ .Labels.dashboard_url }}|View Dashboard>{{ end }}
+      
+      *Details:*
+      {{ range .Labels.SortedPairs }}• {{ .Name }}: {{ .Value }}
+      {{ end }}
+      {{ end }}
+      {{ end }}

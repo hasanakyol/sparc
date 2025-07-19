@@ -1,0 +1,864 @@
+openapi: 3.0.3
+info:
+  title: SPARC Authentication Service
+  description: |
+    The SPARC Authentication Service handles user authentication, authorization, and session management
+    for the entire SPARC security platform.
+    
+    ## Features
+    
+    - JWT-based authentication with access and refresh tokens
+    - Multi-factor authentication (MFA) support
+    - Password policies and security
+    - Session management
+    - Role-based access control (RBAC)
+    - SSO integration support
+    - Audit logging for security events
+    
+    ## Token Management
+    
+    The service uses a dual-token approach:
+    - **Access Token**: Short-lived (15 minutes), used for API requests
+    - **Refresh Token**: Long-lived (7 days), used to obtain new access tokens
+    
+    ## Security Features
+    
+    - Password complexity requirements
+    - Password history to prevent reuse
+    - Account lockout after failed attempts
+    - MFA via TOTP (Time-based One-Time Password)
+    - JWT token blacklisting
+    - Comprehensive audit logging
+  version: 1.0.0
+  contact:
+    name: SPARC Security Team
+    email: security@sparc.security
+    url: https://sparc.security/support
+
+servers:
+  - url: https://api.sparc.security/v1/auth
+    description: Production
+  - url: https://staging-api.sparc.security/v1/auth
+    description: Staging
+  - url: http://localhost:3001
+    description: Local development
+
+tags:
+  - name: Authentication
+    description: User authentication endpoints
+  - name: Session
+    description: Session management endpoints
+  - name: Profile
+    description: User profile management
+  - name: MFA
+    description: Multi-factor authentication
+  - name: Password
+    description: Password management
+  - name: Health
+    description: Service health checks
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Get service health
+      description: Returns the health status of the authentication service
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service is unhealthy
+
+  /signup:
+    post:
+      tags:
+        - Authentication
+      summary: Create new user account
+      description: |
+        Creates a new user account with the provided credentials.
+        Sends verification email if email verification is enabled.
+      operationId: signup
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: USER_EXISTS
+                  message: User with this email already exists
+
+  /login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: |
+        Authenticates a user with email and password.
+        Returns access and refresh tokens on successful authentication.
+        May require MFA verification if enabled for the user.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+          headers:
+            Set-Cookie:
+              description: Refresh token cookie
+              schema:
+                type: string
+                example: refreshToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=604800
+        '202':
+          description: MFA verification required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MFARequiredResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Invalid email or password
+        '423':
+          description: Account locked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: ACCOUNT_LOCKED
+                  message: Account locked due to too many failed attempts
+                  details:
+                    locked_until: "2024-01-18T11:30:00Z"
+
+  /logout:
+    post:
+      tags:
+        - Authentication
+      summary: User logout
+      description: |
+        Logs out the current user by invalidating their tokens.
+        Blacklists the current access token and removes the refresh token.
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Logged out successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: |
+        Uses a valid refresh token to obtain a new access token.
+        The refresh token can be provided either in the request body or as a cookie.
+      operationId: refreshToken
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /verify-email:
+    post:
+      tags:
+        - Authentication
+      summary: Verify email address
+      description: Verifies a user's email address using the verification token
+      operationId: verifyEmail
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                  description: Email verification token
+      responses:
+        '200':
+          description: Email verified successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Email verified successfully
+        '400':
+          description: Invalid or expired token
+
+  /profile:
+    get:
+      tags:
+        - Profile
+      summary: Get user profile
+      description: Returns the current user's profile information
+      operationId: getProfile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    patch:
+      tags:
+        - Profile
+      summary: Update user profile
+      description: Updates the current user's profile information
+      operationId: updateProfile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /change-password:
+    post:
+      tags:
+        - Password
+      summary: Change password
+      description: |
+        Changes the current user's password.
+        Requires the current password for verification.
+        Enforces password policy and history checks.
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Password changed successfully
+        '400':
+          description: Password policy violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordPolicyError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /reset-password:
+    post:
+      tags:
+        - Password
+      summary: Request password reset
+      description: Initiates password reset process by sending reset email
+      operationId: requestPasswordReset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Password reset email sent if user exists
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: If the email exists, a password reset link has been sent
+
+  /reset-password/confirm:
+    post:
+      tags:
+        - Password
+      summary: Confirm password reset
+      description: Resets password using the reset token
+      operationId: confirmPasswordReset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordConfirmRequest'
+      responses:
+        '200':
+          description: Password reset successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Password reset successfully
+        '400':
+          description: Invalid token or password policy violation
+
+  /mfa/enable:
+    post:
+      tags:
+        - MFA
+      summary: Enable MFA
+      description: |
+        Enables multi-factor authentication for the current user.
+        Returns a QR code and secret for TOTP setup.
+      operationId: enableMFA
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: MFA setup initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MFASetupResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /mfa/confirm:
+    post:
+      tags:
+        - MFA
+      summary: Confirm MFA setup
+      description: Confirms MFA setup by verifying a TOTP code
+      operationId: confirmMFA
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+              properties:
+                code:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+                  description: 6-digit TOTP code
+      responses:
+        '200':
+          description: MFA enabled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: MFA enabled successfully
+                  backupCodes:
+                    type: array
+                    items:
+                      type: string
+                    description: Backup codes for account recovery
+        '400':
+          description: Invalid code
+
+  /mfa/disable:
+    post:
+      tags:
+        - MFA
+      summary: Disable MFA
+      description: Disables multi-factor authentication for the current user
+      operationId: disableMFA
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+              properties:
+                password:
+                  type: string
+                  description: Current password for verification
+      responses:
+        '200':
+          description: MFA disabled successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /mfa/verify:
+    post:
+      tags:
+        - MFA
+      summary: Verify MFA code
+      description: Verifies MFA code during login
+      operationId: verifyMFA
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - sessionId
+                - code
+              properties:
+                sessionId:
+                  type: string
+                  description: Temporary session ID from login response
+                code:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+                  description: 6-digit TOTP code
+      responses:
+        '200':
+          description: MFA verification successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid code or session
+
+  /sessions:
+    get:
+      tags:
+        - Session
+      summary: List active sessions
+      description: Returns all active sessions for the current user
+      operationId: listSessions
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of active sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /sessions/{sessionId}:
+    delete:
+      tags:
+        - Session
+      summary: Revoke session
+      description: Revokes a specific session
+      operationId: revokeSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: sessionId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Session revoked successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        version:
+          type: string
+        uptime:
+          type: integer
+          description: Uptime in seconds
+        timestamp:
+          type: string
+          format: date-time
+
+    SignupRequest:
+      type: object
+      required:
+        - email
+        - password
+        - firstName
+        - lastName
+        - organizationId
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+          description: Must meet password policy requirements
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 50
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 50
+        organizationId:
+          type: string
+          format: uuid
+          description: Organization to join
+        role:
+          type: string
+          enum: [user, admin, viewer]
+          default: user
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        rememberMe:
+          type: boolean
+          default: false
+          description: Extends refresh token lifetime
+
+    RefreshTokenRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          description: Refresh token (if not provided as cookie)
+
+    ChangePasswordRequest:
+      type: object
+      required:
+        - currentPassword
+        - newPassword
+      properties:
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+          minLength: 8
+
+    ResetPasswordConfirmRequest:
+      type: object
+      required:
+        - token
+        - newPassword
+      properties:
+        token:
+          type: string
+          description: Password reset token
+        newPassword:
+          type: string
+          minLength: 8
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 50
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 50
+        phoneNumber:
+          type: string
+          pattern: '^\+?[1-9]\d{1,14}$'
+        timezone:
+          type: string
+          description: IANA timezone identifier
+        language:
+          type: string
+          enum: [en, es, fr, de, zh, ja]
+
+    AuthResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          description: JWT access token
+        expiresIn:
+          type: integer
+          description: Access token lifetime in seconds
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
+    TokenResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          description: JWT access token
+        expiresIn:
+          type: integer
+          description: Access token lifetime in seconds
+
+    MFARequiredResponse:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          description: Temporary session ID for MFA verification
+        message:
+          type: string
+          example: MFA verification required
+
+    MFASetupResponse:
+      type: object
+      properties:
+        secret:
+          type: string
+          description: TOTP secret key
+        qrCode:
+          type: string
+          description: QR code as data URL
+        backupCodes:
+          type: array
+          items:
+            type: string
+          description: One-time backup codes
+
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        firstName:
+          type: string
+        lastName:
+          type: string
+        role:
+          type: string
+          enum: [user, admin, viewer]
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        emailVerified:
+          type: boolean
+        mfaEnabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        lastLoginAt:
+          type: string
+          format: date-time
+        phoneNumber:
+          type: string
+        timezone:
+          type: string
+        language:
+          type: string
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userAgent:
+          type: string
+        ipAddress:
+          type: string
+        location:
+          type: string
+          description: Approximate location based on IP
+        createdAt:
+          type: string
+          format: date-time
+        lastActivityAt:
+          type: string
+          format: date-time
+        current:
+          type: boolean
+          description: Is this the current session
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+
+    PasswordPolicyError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            error:
+              type: object
+              properties:
+                violations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      rule:
+                        type: string
+                        enum: [minLength, uppercase, lowercase, numbers, special, history, common]
+                      message:
+                        type: string
+
+  responses:
+    BadRequestError:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    UnauthorizedError:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFoundError:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

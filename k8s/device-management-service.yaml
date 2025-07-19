@@ -1,0 +1,508 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: device-management-config
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: config
+data:
+  NODE_ENV: "production"
+  PORT: "3005"
+  LOG_LEVEL: "info"
+  METRICS_PORT: "9090"
+  HEALTH_CHECK_PORT: "8080"
+  # Device Discovery Configuration
+  ONVIF_DISCOVERY_ENABLED: "true"
+  ONVIF_DISCOVERY_TIMEOUT: "30000"
+  MDNS_DISCOVERY_ENABLED: "true"
+  MDNS_DISCOVERY_INTERVAL: "60000"
+  DHCP_MONITORING_ENABLED: "true"
+  DHCP_MONITORING_INTERVAL: "30000"
+  # Network Scanning Configuration
+  NETWORK_SCAN_ENABLED: "true"
+  NETWORK_SCAN_TIMEOUT: "10000"
+  NETWORK_SCAN_CONCURRENT_LIMIT: "50"
+  # Device Protocol Configuration
+  SUPPORTED_PROTOCOLS: "ONVIF,RTSP,HTTP,SNMP,Modbus"
+  DEVICE_TIMEOUT: "30000"
+  DEVICE_RETRY_ATTEMPTS: "3"
+  DEVICE_RETRY_DELAY: "5000"
+  # Firmware Management
+  FIRMWARE_UPDATE_ENABLED: "true"
+  FIRMWARE_BACKUP_ENABLED: "true"
+  FIRMWARE_ROLLBACK_ENABLED: "true"
+  # Health Monitoring
+  DEVICE_HEALTH_CHECK_INTERVAL: "300000"
+  DEVICE_OFFLINE_THRESHOLD: "600000"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: microservice
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: device-management-service
+  template:
+    metadata:
+      labels:
+        app: device-management-service
+        component: microservice
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: device-management-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        # Allow network scanning capabilities
+        supplementalGroups: [1000]
+      containers:
+      - name: device-management-service
+        image: sparc/device-management-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3005
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: redis-credentials
+              key: url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: jwt-secret
+              key: secret
+        envFrom:
+        - configMapRef:
+            name: device-management-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            add:
+            # Required for network scanning and device discovery
+            - NET_RAW
+            - NET_ADMIN
+            drop:
+            - ALL
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /startup
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: device-config
+          mountPath: /app/config
+          readOnly: true
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: device-config
+        configMap:
+          name: device-management-config
+      terminationGracePeriodSeconds: 30
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: microservice
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3005
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: device-management-service
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: rbac
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: rbac
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: rbac
+subjects:
+- kind: ServiceAccount
+  name: device-management-service
+  namespace: sparc
+roleRef:
+  kind: Role
+  name: device-management-service
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: device-management-service
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: availability
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: device-management-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: security
+spec:
+  podSelector:
+    matchLabels:
+      app: device-management-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from API Gateway
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    ports:
+    - protocol: TCP
+      port: 3005
+  # Allow metrics scraping from Prometheus
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  # Allow health checks from load balancer
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow database access
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow Redis access
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow device network access for discovery and management
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 554  # RTSP
+    - protocol: TCP
+      port: 8080 # Device web interfaces
+    - protocol: TCP
+      port: 8443 # Secure device web interfaces
+    - protocol: UDP
+      port: 3702 # ONVIF discovery
+    - protocol: UDP
+      port: 5353 # mDNS
+    - protocol: UDP
+      port: 67   # DHCP
+    - protocol: UDP
+      port: 68   # DHCP
+    - protocol: TCP
+      port: 161  # SNMP
+    - protocol: UDP
+      port: 161  # SNMP
+    - protocol: TCP
+      port: 502  # Modbus TCP
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: device-management-service
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scrapeTimeout: 10s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: device-management-service
+  namespace: sparc
+  labels:
+    app: device-management-service
+    component: monitoring
+spec:
+  groups:
+  - name: device-management-service.rules
+    rules:
+    # Service Health Alerts
+    - alert: DeviceManagementServiceDown
+      expr: up{job="device-management-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: device-management-service
+      annotations:
+        summary: "Device Management Service is down"
+        description: "Device Management Service has been down for more than 1 minute"
+
+    - alert: DeviceManagementServiceHighErrorRate
+      expr: rate(http_requests_total{job="device-management-service",status=~"5.."}[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        service: device-management-service
+      annotations:
+        summary: "High error rate in Device Management Service"
+        description: "Device Management Service error rate is {{ $value }} errors per second"
+
+    - alert: DeviceManagementServiceHighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="device-management-service"}[5m])) > 1
+      for: 5m
+      labels:
+        severity: warning
+        service: device-management-service
+      annotations:
+        summary: "High latency in Device Management Service"
+        description: "Device Management Service 95th percentile latency is {{ $value }}s"
+
+    # Device-Specific Alerts
+    - alert: DeviceDiscoveryFailure
+      expr: rate(device_discovery_failures_total[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        service: device-management-service
+      annotations:
+        summary: "High device discovery failure rate"
+        description: "Device discovery failure rate is {{ $value }} failures per second"
+
+    - alert: DeviceOfflineCount
+      expr: device_offline_count > 10
+      for: 2m
+      labels:
+        severity: warning
+        service: device-management-service
+      annotations:
+        summary: "High number of offline devices"
+        description: "{{ $value }} devices are currently offline"
+
+    - alert: DeviceHealthCheckFailure
+      expr: rate(device_health_check_failures_total[5m]) > 0.2
+      for: 5m
+      labels:
+        severity: warning
+        service: device-management-service
+      annotations:
+        summary: "High device health check failure rate"
+        description: "Device health check failure rate is {{ $value }} failures per second"
+
+    - alert: FirmwareUpdateFailure
+      expr: rate(firmware_update_failures_total[5m]) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+        service: device-management-service
+      annotations:
+        summary: "Firmware update failures detected"
+        description: "Firmware update failure rate is {{ $value }} failures per second"
+
+    # Resource Alerts
+    - alert: DeviceManagementServiceHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"device-management-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: device-management-service
+      annotations:
+        summary: "High memory usage in Device Management Service"
+        description: "Device Management Service memory usage is {{ $value | humanizePercentage }}"
+
+    - alert: DeviceManagementServiceHighCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{pod=~"device-management-service-.*"}[5m]) / container_spec_cpu_quota * 100 > 90
+      for: 5m
+      labels:
+        severity: warning
+        service: device-management-service
+      annotations:
+        summary: "High CPU usage in Device Management Service"
+        description: "Device Management Service CPU usage is {{ $value }}%"

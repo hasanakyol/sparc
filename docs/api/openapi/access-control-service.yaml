@@ -1,0 +1,1266 @@
+openapi: 3.0.3
+info:
+  title: SPARC Access Control Service
+  description: |
+    The SPARC Access Control Service manages physical access control for doors, gates, and other secured entry points.
+    
+    ## Core Features
+    
+    - Access point management (doors, gates, turnstiles)
+    - Badge and credential management
+    - Access rules and schedules
+    - Real-time access events
+    - Anti-passback and tailgating detection
+    - Visitor access management
+    - Integration with hardware controllers
+    - Offline operation support
+    
+    ## Access Decision Process
+    
+    1. Credential presented at reader
+    2. Service validates credential status
+    3. Checks access rules and schedules
+    4. Verifies anti-passback rules
+    5. Returns access decision
+    6. Logs access event
+    
+    ## Hardware Integration
+    
+    Supports major access control hardware:
+    - HID
+    - Honeywell
+    - Lenel
+    - Software House
+    - Generic Wiegand controllers
+  version: 1.0.0
+  contact:
+    name: SPARC Access Team
+    email: access@sparc.security
+    url: https://sparc.security/support
+
+servers:
+  - url: https://api.sparc.security/v1/access
+    description: Production
+  - url: https://staging-api.sparc.security/v1/access
+    description: Staging
+  - url: http://localhost:3004
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Access Points
+    description: Doors, gates, and entry points
+  - name: Credentials
+    description: Badges and access credentials
+  - name: Access Rules
+    description: Access control rules and policies
+  - name: Schedules
+    description: Time-based access schedules
+  - name: Events
+    description: Access events and logs
+  - name: Controllers
+    description: Hardware controller management
+  - name: Health
+    description: Service health checks
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Get service health
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /access-points:
+    get:
+      tags:
+        - Access Points
+      summary: List access points
+      description: Returns all access points in the system
+      operationId: listAccessPoints
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: siteId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by site
+        - in: query
+          name: zoneId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by zone
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [door, gate, turnstile, elevator, parking]
+          description: Filter by type
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [online, offline, forced, held, alarmed]
+          description: Filter by status
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of access points
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessPoints:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccessPoint'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Access Points
+      summary: Create access point
+      description: Creates a new access point
+      operationId: createAccessPoint
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccessPointRequest'
+      responses:
+        '201':
+          description: Access point created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessPoint'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '409':
+          description: Access point already exists
+
+  /access-points/{accessPointId}:
+    get:
+      tags:
+        - Access Points
+      summary: Get access point
+      operationId: getAccessPoint
+      parameters:
+        - $ref: '#/components/parameters/AccessPointId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Access point details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessPoint'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags:
+        - Access Points
+      summary: Update access point
+      operationId: updateAccessPoint
+      parameters:
+        - $ref: '#/components/parameters/AccessPointId'
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAccessPointRequest'
+      responses:
+        '200':
+          description: Access point updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessPoint'
+
+    delete:
+      tags:
+        - Access Points
+      summary: Delete access point
+      operationId: deleteAccessPoint
+      parameters:
+        - $ref: '#/components/parameters/AccessPointId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '204':
+          description: Access point deleted
+
+  /access-points/{accessPointId}/control:
+    post:
+      tags:
+        - Access Points
+      summary: Control access point
+      description: Sends control commands to the access point (unlock, lock, etc.)
+      operationId: controlAccessPoint
+      parameters:
+        - $ref: '#/components/parameters/AccessPointId'
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlCommand'
+      responses:
+        '200':
+          description: Command executed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          description: Invalid command
+        '503':
+          description: Access point offline
+
+  /credentials:
+    get:
+      tags:
+        - Credentials
+      summary: List credentials
+      description: Returns all credentials
+      operationId: listCredentials
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: userId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by user
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [badge, pin, biometric, mobile]
+          description: Filter by type
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, suspended, expired, lost]
+          description: Filter by status
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  credentials:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Credential'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Credentials
+      summary: Create credential
+      description: Creates a new access credential
+      operationId: createCredential
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCredentialRequest'
+      responses:
+        '201':
+          description: Credential created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '409':
+          description: Credential already exists
+
+  /credentials/{credentialId}:
+    get:
+      tags:
+        - Credentials
+      summary: Get credential
+      operationId: getCredential
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Credential details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags:
+        - Credentials
+      summary: Update credential
+      operationId: updateCredential
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCredentialRequest'
+      responses:
+        '200':
+          description: Credential updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+
+    delete:
+      tags:
+        - Credentials
+      summary: Delete credential
+      operationId: deleteCredential
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '204':
+          description: Credential deleted
+
+  /access-rules:
+    get:
+      tags:
+        - Access Rules
+      summary: List access rules
+      description: Returns all access rules
+      operationId: listAccessRules
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: accessGroupId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by access group
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of access rules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccessRule'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Access Rules
+      summary: Create access rule
+      description: Creates a new access rule
+      operationId: createAccessRule
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccessRuleRequest'
+      responses:
+        '201':
+          description: Access rule created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRule'
+
+  /schedules:
+    get:
+      tags:
+        - Schedules
+      summary: List schedules
+      description: Returns all access schedules
+      operationId: listSchedules
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of schedules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  schedules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Schedule'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Schedules
+      summary: Create schedule
+      description: Creates a new access schedule
+      operationId: createSchedule
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScheduleRequest'
+      responses:
+        '201':
+          description: Schedule created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+
+  /events:
+    get:
+      tags:
+        - Events
+      summary: List access events
+      description: Returns access events based on filters
+      operationId: listAccessEvents
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: startTime
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: endTime
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: accessPointId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: credentialId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: outcome
+          schema:
+            type: string
+            enum: [granted, denied, error]
+        - in: query
+          name: reason
+          schema:
+            type: string
+            enum: [valid, invalid_credential, no_access, schedule, anti_passback, forced, tailgate]
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of access events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccessEvent'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /events/stream:
+    get:
+      tags:
+        - Events
+      summary: Stream access events
+      description: |
+        Opens a Server-Sent Events (SSE) stream for real-time access events.
+        
+        ## Event Format
+        ```
+        event: access_event
+        data: {"id":"123","type":"access_granted","accessPointId":"456",...}
+        ```
+      operationId: streamAccessEvents
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: siteId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by site
+        - in: query
+          name: accessPointIds
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+          style: form
+          explode: false
+          description: Filter by specific access points
+      responses:
+        '200':
+          description: Event stream opened
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /controllers:
+    get:
+      tags:
+        - Controllers
+      summary: List controllers
+      description: Returns all hardware controllers
+      operationId: listControllers
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [online, offline, error]
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of controllers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  controllers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Controller'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /validate-access:
+    post:
+      tags:
+        - Access Rules
+      summary: Validate access request
+      description: |
+        Validates if a credential has access to a specific access point.
+        Used by controllers for access decisions.
+      operationId: validateAccess
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateAccessRequest'
+      responses:
+        '200':
+          description: Access validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateAccessResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TenantId:
+      in: header
+      name: X-Tenant-ID
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    AccessPointId:
+      in: path
+      name: accessPointId
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    CredentialId:
+      in: path
+      name: credentialId
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    PageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    PageNumber:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        controllers:
+          type: object
+          properties:
+            online:
+              type: integer
+            offline:
+              type: integer
+            total:
+              type: integer
+
+    AccessPoint:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [door, gate, turnstile, elevator, parking]
+        siteId:
+          type: string
+          format: uuid
+        zoneId:
+          type: string
+          format: uuid
+        controllerId:
+          type: string
+          format: uuid
+        readerIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        status:
+          type: string
+          enum: [online, offline, forced, held, alarmed]
+        currentState:
+          type: object
+          properties:
+            locked:
+              type: boolean
+            doorPosition:
+              type: string
+              enum: [closed, open, unknown]
+            alarm:
+              type: boolean
+        configuration:
+          type: object
+          properties:
+            unlockTime:
+              type: integer
+              description: Door unlock time in seconds
+            extendedUnlockTime:
+              type: integer
+              description: Extended unlock time for ADA
+            doorHeldTime:
+              type: integer
+              description: Maximum time door can be held open
+            antiPassback:
+              type: boolean
+            antiPassbackTimeout:
+              type: integer
+              description: Minutes before anti-passback resets
+        location:
+          type: object
+          properties:
+            building:
+              type: string
+            floor:
+              type: integer
+            room:
+              type: string
+            coordinates:
+              type: object
+              properties:
+                latitude:
+                  type: number
+                longitude:
+                  type: number
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateAccessPointRequest:
+      type: object
+      required:
+        - name
+        - type
+        - siteId
+        - zoneId
+        - controllerId
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [door, gate, turnstile, elevator, parking]
+        siteId:
+          type: string
+          format: uuid
+        zoneId:
+          type: string
+          format: uuid
+        controllerId:
+          type: string
+          format: uuid
+        readerIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        configuration:
+          type: object
+          properties:
+            unlockTime:
+              type: integer
+              default: 5
+            extendedUnlockTime:
+              type: integer
+              default: 15
+            doorHeldTime:
+              type: integer
+              default: 30
+            antiPassback:
+              type: boolean
+              default: false
+            antiPassbackTimeout:
+              type: integer
+              default: 60
+        location:
+          type: object
+          properties:
+            building:
+              type: string
+            floor:
+              type: integer
+            room:
+              type: string
+            coordinates:
+              type: object
+              properties:
+                latitude:
+                  type: number
+                longitude:
+                  type: number
+
+    UpdateAccessPointRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        configuration:
+          type: object
+          properties:
+            unlockTime:
+              type: integer
+            extendedUnlockTime:
+              type: integer
+            doorHeldTime:
+              type: integer
+            antiPassback:
+              type: boolean
+            antiPassbackTimeout:
+              type: integer
+        location:
+          type: object
+          properties:
+            building:
+              type: string
+            floor:
+              type: integer
+            room:
+              type: string
+
+    ControlCommand:
+      type: object
+      required:
+        - command
+      properties:
+        command:
+          type: string
+          enum: [unlock, lock, momentary_unlock, extended_unlock, enable, disable, reset]
+        duration:
+          type: integer
+          description: Duration in seconds (for momentary commands)
+        reason:
+          type: string
+          description: Reason for manual control
+
+    Credential:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [badge, pin, biometric, mobile]
+        code:
+          type: string
+          description: Card number, PIN, etc. (partially masked)
+        userId:
+          type: string
+          format: uuid
+        userName:
+          type: string
+        status:
+          type: string
+          enum: [active, suspended, expired, lost]
+        issuedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        accessGroups:
+          type: array
+          items:
+            type: string
+            format: uuid
+        lastUsed:
+          type: string
+          format: date-time
+        usageCount:
+          type: integer
+        metadata:
+          type: object
+          additionalProperties: true
+
+    CreateCredentialRequest:
+      type: object
+      required:
+        - type
+        - code
+        - userId
+      properties:
+        type:
+          type: string
+          enum: [badge, pin, biometric, mobile]
+        code:
+          type: string
+          description: Card number, PIN, etc.
+        userId:
+          type: string
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+        accessGroups:
+          type: array
+          items:
+            type: string
+            format: uuid
+        metadata:
+          type: object
+          additionalProperties: true
+
+    UpdateCredentialRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [active, suspended, expired, lost]
+        expiresAt:
+          type: string
+          format: date-time
+        accessGroups:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    AccessRule:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        accessGroupId:
+          type: string
+          format: uuid
+        accessPoints:
+          type: array
+          items:
+            type: string
+            format: uuid
+        scheduleId:
+          type: string
+          format: uuid
+        priority:
+          type: integer
+          description: Higher priority rules override lower
+        conditions:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [always, escort_required, two_person_rule, threat_level]
+              parameters:
+                type: object
+        enabled:
+          type: boolean
+
+    CreateAccessRuleRequest:
+      type: object
+      required:
+        - name
+        - accessGroupId
+        - accessPoints
+      properties:
+        name:
+          type: string
+        accessGroupId:
+          type: string
+          format: uuid
+        accessPoints:
+          type: array
+          items:
+            type: string
+            format: uuid
+        scheduleId:
+          type: string
+          format: uuid
+        priority:
+          type: integer
+          default: 0
+        conditions:
+          type: array
+          items:
+            type: object
+        enabled:
+          type: boolean
+          default: true
+
+    Schedule:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        timezone:
+          type: string
+          example: America/New_York
+        type:
+          type: string
+          enum: [always, weekly, date_range, holiday]
+        rules:
+          type: array
+          items:
+            oneOf:
+              - type: object
+                properties:
+                  type:
+                    type: string
+                    enum: [weekly]
+                  daysOfWeek:
+                    type: array
+                    items:
+                      type: integer
+                      minimum: 0
+                      maximum: 6
+                  startTime:
+                    type: string
+                    pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+                  endTime:
+                    type: string
+                    pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+              - type: object
+                properties:
+                  type:
+                    type: string
+                    enum: [date_range]
+                  startDate:
+                    type: string
+                    format: date
+                  endDate:
+                    type: string
+                    format: date
+                  startTime:
+                    type: string
+                    pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+                  endTime:
+                    type: string
+                    pattern: '^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$'
+
+    CreateScheduleRequest:
+      type: object
+      required:
+        - name
+        - timezone
+        - type
+        - rules
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        timezone:
+          type: string
+        type:
+          type: string
+          enum: [always, weekly, date_range, holiday]
+        rules:
+          type: array
+          items:
+            type: object
+
+    AccessEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        accessPointId:
+          type: string
+          format: uuid
+        accessPointName:
+          type: string
+        credentialId:
+          type: string
+          format: uuid
+        credentialType:
+          type: string
+        userId:
+          type: string
+          format: uuid
+        userName:
+          type: string
+        outcome:
+          type: string
+          enum: [granted, denied, error]
+        reason:
+          type: string
+          enum: [valid, invalid_credential, no_access, schedule, anti_passback, forced, tailgate, emergency]
+        direction:
+          type: string
+          enum: [in, out, unknown]
+        details:
+          type: object
+          additionalProperties: true
+
+    ValidateAccessRequest:
+      type: object
+      required:
+        - credentialCode
+        - accessPointId
+      properties:
+        credentialCode:
+          type: string
+        accessPointId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+          description: Override current time for testing
+
+    ValidateAccessResponse:
+      type: object
+      properties:
+        granted:
+          type: boolean
+        reason:
+          type: string
+          enum: [valid, invalid_credential, no_access, schedule, anti_passback, suspended, expired]
+        credentialId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        unlockDuration:
+          type: integer
+          description: Seconds to unlock (if granted)
+        message:
+          type: string
+          description: Additional information
+
+    Controller:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+          enum: [hid, honeywell, lenel, software_house, generic]
+        ipAddress:
+          type: string
+        macAddress:
+          type: string
+        status:
+          type: string
+          enum: [online, offline, error]
+        firmwareVersion:
+          type: string
+        lastSeen:
+          type: string
+          format: date-time
+        accessPoints:
+          type: array
+          items:
+            type: string
+            format: uuid
+        capabilities:
+          type: object
+          properties:
+            maxDoors:
+              type: integer
+            maxReaders:
+              type: integer
+            offlineStorage:
+              type: boolean
+            biometricSupport:
+              type: boolean
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalItems:
+          type: integer
+        totalPages:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+
+  responses:
+    BadRequestError:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    UnauthorizedError:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFoundError:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

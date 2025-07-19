@@ -1,0 +1,24 @@
+# Performance Monitoring Configuration
+metrics:
+  - name: api_response_time
+    type: histogram
+    buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+    
+  - name: database_query_duration
+    type: histogram
+    buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1]
+    
+  - name: cache_hit_rate
+    type: gauge
+    target: 0.85
+    
+  - name: concurrent_connections
+    type: gauge
+    alert_threshold: 10000
+
+targets:
+  api_response_p95: 200ms
+  video_latency: 500ms
+  dashboard_load: 2s
+  database_connection_pool: 80%
+  cache_hit_rate: 85%

@@ -1,0 +1,575 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: security-compliance-service
+  namespace: sparc
+  labels:
+    app: security-compliance-service
+    component: backend
+    tier: service
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: security-compliance-service
+  template:
+    metadata:
+      labels:
+        app: security-compliance-service
+        component: backend
+        tier: service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3009"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: security-compliance-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+      - name: security-compliance-service
+        image: sparc/security-compliance-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3009
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3009"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: jwt-secret
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: aws-region
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: aws-access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: aws-secret-access-key
+        - name: AWS_KMS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: aws-kms-key-id
+        - name: AWS_GUARDDUTY_DETECTOR_ID
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: aws-guardduty-detector-id
+        - name: AWS_SECURITYHUB_ACCOUNT_ID
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: aws-securityhub-account-id
+        - name: AWS_CERTIFICATE_MANAGER_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: aws-certificate-manager-region
+        - name: AUDIT_LOG_RETENTION_YEARS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: audit-log-retention-years
+        - name: COMPLIANCE_REPORT_SCHEDULE
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: compliance-report-schedule
+        - name: SECURITY_SCAN_INTERVAL_HOURS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: security-scan-interval-hours
+        - name: CERTIFICATE_RENEWAL_DAYS_BEFORE
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: certificate-renewal-days-before
+        - name: THREAT_DETECTION_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: threat-detection-enabled
+        - name: INCIDENT_RESPONSE_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: incident-response-webhook-url
+        - name: COMPLIANCE_NOTIFICATION_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: compliance-notification-email
+        - name: ENCRYPTION_KEY_ROTATION_DAYS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: encryption-key-rotation-days
+        - name: SECURITY_METRICS_COLLECTION_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: security-metrics-collection-enabled
+        - name: IMMUTABLE_AUDIT_STORAGE_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: immutable-audit-storage-bucket
+        - name: CORS_ORIGIN
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: cors-origin
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: log-level
+        - name: RATE_LIMIT_WINDOW_MS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: rate-limit-window-ms
+        - name: RATE_LIMIT_MAX_REQUESTS
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: rate-limit-max-requests
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 30
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: logs
+          mountPath: /app/logs
+        - name: compliance-reports
+          mountPath: /app/reports
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+      - name: compliance-reports
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - security-compliance-service
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+      - key: "sparc.io/security-compliance-service"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: security-compliance-service
+  namespace: sparc
+  labels:
+    app: security-compliance-service
+    component: backend
+    tier: service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: security-compliance-service
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: security-compliance-service
+  namespace: sparc
+  labels:
+    app: security-compliance-service
+    component: backend
+    tier: service
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-security-compliance-service-role
+automountServiceAccountToken: true
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: security-compliance-service-hpa
+  namespace: sparc
+  labels:
+    app: security-compliance-service
+    component: backend
+    tier: service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: security-compliance-service
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: security-compliance-service-pdb
+  namespace: sparc
+  labels:
+    app: security-compliance-service
+    component: backend
+    tier: service
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: security-compliance-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: security-compliance-service-netpol
+  namespace: sparc
+  labels:
+    app: security-compliance-service
+    component: backend
+    tier: service
+spec:
+  podSelector:
+    matchLabels:
+      app: security-compliance-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          component: monitoring
+    ports:
+    - protocol: TCP
+      port: 3009
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: security-compliance-service-monitor
+  namespace: sparc
+  labels:
+    app: security-compliance-service
+    component: backend
+    tier: service
+spec:
+  selector:
+    matchLabels:
+      app: security-compliance-service
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: security-compliance-service-alerts
+  namespace: sparc
+  labels:
+    app: security-compliance-service
+    component: backend
+    tier: service
+spec:
+  groups:
+  - name: security-compliance-service.rules
+    rules:
+    - alert: SecurityComplianceServiceDown
+      expr: up{job="security-compliance-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: security-compliance-service
+      annotations:
+        summary: "Security & Compliance Service is down"
+        description: "Security & Compliance Service has been down for more than 1 minute"
+    - alert: SecurityComplianceServiceHighErrorRate
+      expr: rate(http_requests_total{job="security-compliance-service",status=~"5.."}[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        service: security-compliance-service
+      annotations:
+        summary: "High error rate in Security & Compliance Service"
+        description: "Security & Compliance Service error rate is {{ $value }} errors per second"
+    - alert: SecurityComplianceServiceHighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="security-compliance-service"}[5m])) > 2
+      for: 5m
+      labels:
+        severity: warning
+        service: security-compliance-service
+      annotations:
+        summary: "High latency in Security & Compliance Service"
+        description: "Security & Compliance Service 95th percentile latency is {{ $value }}s"
+    - alert: SecurityComplianceServiceHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"security-compliance-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: security-compliance-service
+      annotations:
+        summary: "High memory usage in Security & Compliance Service"
+        description: "Security & Compliance Service memory usage is above 90%"
+    - alert: SecurityComplianceServiceHighCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{pod=~"security-compliance-service-.*"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: security-compliance-service
+      annotations:
+        summary: "High CPU usage in Security & Compliance Service"
+        description: "Security & Compliance Service CPU usage is above 80%"
+    - alert: AuditLogRetentionViolation
+      expr: security_compliance_audit_log_retention_days < 2555
+      for: 1m
+      labels:
+        severity: critical
+        service: security-compliance-service
+        compliance: audit-retention
+      annotations:
+        summary: "Audit log retention policy violation"
+        description: "Audit log retention is below required 7-year (2555 days) threshold"
+    - alert: ComplianceReportGenerationFailed
+      expr: increase(security_compliance_report_generation_failures_total[1h]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: security-compliance-service
+        compliance: reporting
+      annotations:
+        summary: "Compliance report generation failed"
+        description: "{{ $value }} compliance report generation failures in the last hour"
+    - alert: CertificateExpirationWarning
+      expr: security_compliance_certificate_expiry_days < 30
+      for: 1m
+      labels:
+        severity: warning
+        service: security-compliance-service
+        compliance: certificates
+      annotations:
+        summary: "Certificate expiring soon"
+        description: "Certificate {{ $labels.certificate_name }} expires in {{ $value }} days"
+    - alert: SecurityThreatDetected
+      expr: increase(security_compliance_threats_detected_total[5m]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: security-compliance-service
+        security: threat-detection
+      annotations:
+        summary: "Security threat detected"
+        description: "{{ $value }} security threats detected in the last 5 minutes"
+    - alert: EncryptionKeyRotationOverdue
+      expr: security_compliance_key_rotation_overdue_days > 0
+      for: 1m
+      labels:
+        severity: warning
+        service: security-compliance-service
+        security: encryption
+      annotations:
+        summary: "Encryption key rotation overdue"
+        description: "Encryption key rotation is overdue by {{ $value }} days"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-compliance-config
+  namespace: sparc
+  labels:
+    app: security-compliance-service
+    component: config
+data:
+  aws-region: "us-east-1"
+  aws-certificate-manager-region: "us-east-1"
+  audit-log-retention-years: "7"
+  compliance-report-schedule: "0 2 * * 1"
+  security-scan-interval-hours: "24"
+  certificate-renewal-days-before: "30"
+  threat-detection-enabled: "true"
+  encryption-key-rotation-days: "90"
+  security-metrics-collection-enabled: "true"
+  sox-compliance-enabled: "true"
+  hipaa-compliance-enabled: "true"
+  pci-dss-compliance-enabled: "true"
+  gdpr-compliance-enabled: "true"
+  audit-log-encryption-enabled: "true"
+  immutable-storage-enabled: "true"
+  security-incident-auto-response: "true"
+  vulnerability-scan-schedule: "0 3 * * *"
+  penetration-test-schedule: "0 4 1 * *"
+  compliance-dashboard-enabled: "true"
+  security-awareness-training-enabled: "true"

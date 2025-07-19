@@ -1,0 +1,565 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elevator-control-service
+  namespace: sparc
+  labels:
+    app: elevator-control-service
+    component: backend
+    tier: service
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: elevator-control-service
+  template:
+    metadata:
+      labels:
+        app: elevator-control-service
+        component: backend
+        tier: service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3012"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: elevator-control-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+      - name: elevator-control-service
+        image: sparc/elevator-control-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3012
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3012"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: jwt-secret
+        - name: OTIS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: otis-api-key
+        - name: OTIS_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: otis-api-secret
+        - name: KONE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: kone-api-key
+        - name: KONE_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: kone-api-secret
+        - name: SCHINDLER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: schindler-api-key
+        - name: SCHINDLER_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: schindler-api-secret
+        - name: THYSSENKRUPP_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: thyssenkrupp-api-key
+        - name: THYSSENKRUPP_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: thyssenkrupp-api-secret
+        - name: ELEVATOR_CONTROL_PROTOCOL
+          valueFrom:
+            configMapKeyRef:
+              name: elevator-control-config
+              key: elevator-control-protocol
+        - name: DESTINATION_DISPATCH_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: elevator-control-config
+              key: destination-dispatch-enabled
+        - name: EMERGENCY_OVERRIDE_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: elevator-control-config
+              key: emergency-override-timeout
+        - name: FLOOR_ACCESS_VALIDATION_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: elevator-control-config
+              key: floor-access-validation-timeout
+        - name: MANUFACTURER_API_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: elevator-control-config
+              key: manufacturer-api-timeout
+        - name: ELEVATOR_STATUS_POLL_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: elevator-control-config
+              key: elevator-status-poll-interval
+        - name: ALERT_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: elevator-control-config
+              key: alert-service-url
+        - name: ACCESS_CONTROL_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: elevator-control-config
+              key: access-control-service-url
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: log-level
+        - name: CORS_ORIGIN
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: cors-origin
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 30
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: logs
+          mountPath: /app/logs
+        - name: elevator-certs
+          mountPath: /app/certs
+          readOnly: true
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+      - name: elevator-certs
+        secret:
+          secretName: elevator-control-certs
+          defaultMode: 0400
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - elevator-control-service
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+      - key: "sparc.io/elevator-control-service"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elevator-control-service
+  namespace: sparc
+  labels:
+    app: elevator-control-service
+    component: backend
+    tier: service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: elevator-control-service
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: elevator-control-service
+  namespace: sparc
+  labels:
+    app: elevator-control-service
+    component: backend
+    tier: service
+automountServiceAccountToken: false
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: elevator-control-service-hpa
+  namespace: sparc
+  labels:
+    app: elevator-control-service
+    component: backend
+    tier: service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: elevator-control-service
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elevator-control-service-pdb
+  namespace: sparc
+  labels:
+    app: elevator-control-service
+    component: backend
+    tier: service
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: elevator-control-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elevator-control-service-netpol
+  namespace: sparc
+  labels:
+    app: elevator-control-service
+    component: backend
+    tier: service
+spec:
+  podSelector:
+    matchLabels:
+      app: elevator-control-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          app: nginx-ingress
+    - podSelector:
+        matchLabels:
+          app: access-control-service
+    - podSelector:
+        matchLabels:
+          app: alert-service
+    ports:
+    - protocol: TCP
+      port: 3012
+  egress:
+  # Database access
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Redis access
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Internal service communication
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: alert-service
+    ports:
+    - protocol: TCP
+      port: 80
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: access-control-service
+    ports:
+    - protocol: TCP
+      port: 80
+  # External manufacturer APIs (HTTPS)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Building automation systems (various protocols)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 8443
+    - protocol: TCP
+      port: 502  # Modbus TCP
+    - protocol: TCP
+      port: 47808 # BACnet
+    - protocol: UDP
+      port: 47808 # BACnet
+  # DNS resolution
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elevator-control-config
+  namespace: sparc
+  labels:
+    app: elevator-control-service
+    component: config
+data:
+  elevator-control-protocol: "REST"
+  destination-dispatch-enabled: "true"
+  emergency-override-timeout: "300"
+  floor-access-validation-timeout: "10"
+  manufacturer-api-timeout: "30"
+  elevator-status-poll-interval: "5"
+  alert-service-url: "http://alert-service.sparc.svc.cluster.local"
+  access-control-service-url: "http://access-control-service.sparc.svc.cluster.local"
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: elevator-control-service-monitor
+  namespace: sparc
+  labels:
+    app: elevator-control-service
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: elevator-control-service
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: elevator-control-service-alerts
+  namespace: sparc
+  labels:
+    app: elevator-control-service
+    component: monitoring
+spec:
+  groups:
+  - name: elevator-control-service
+    rules:
+    - alert: ElevatorControlServiceDown
+      expr: up{job="elevator-control-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: elevator-control-service
+      annotations:
+        summary: "Elevator Control Service is down"
+        description: "Elevator Control Service has been down for more than 1 minute"
+    
+    - alert: ElevatorControlServiceHighCPU
+      expr: rate(container_cpu_usage_seconds_total{pod=~"elevator-control-service-.*"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: elevator-control-service
+      annotations:
+        summary: "Elevator Control Service high CPU usage"
+        description: "Elevator Control Service CPU usage is above 80% for more than 5 minutes"
+    
+    - alert: ElevatorControlServiceHighMemory
+      expr: container_memory_usage_bytes{pod=~"elevator-control-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: elevator-control-service
+      annotations:
+        summary: "Elevator Control Service high memory usage"
+        description: "Elevator Control Service memory usage is above 90% for more than 5 minutes"
+    
+    - alert: ElevatorControlServiceHighErrorRate
+      expr: rate(http_requests_total{job="elevator-control-service",status=~"5.."}[5m]) / rate(http_requests_total{job="elevator-control-service"}[5m]) > 0.1
+      for: 2m
+      labels:
+        severity: critical
+        service: elevator-control-service
+      annotations:
+        summary: "Elevator Control Service high error rate"
+        description: "Elevator Control Service error rate is above 10% for more than 2 minutes"
+    
+    - alert: ElevatorManufacturerAPIDown
+      expr: elevator_manufacturer_api_status == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: elevator-control-service
+      annotations:
+        summary: "Elevator manufacturer API is down"
+        description: "Connection to elevator manufacturer API has been down for more than 1 minute"
+    
+    - alert: ElevatorEmergencyOverride
+      expr: elevator_emergency_override_active == 1
+      for: 0s
+      labels:
+        severity: critical
+        service: elevator-control-service
+      annotations:
+        summary: "Elevator emergency override activated"
+        description: "Emergency override has been activated for elevator system"
+    
+    - alert: ElevatorFloorAccessDenied
+      expr: rate(elevator_floor_access_denied_total[5m]) > 10
+      for: 2m
+      labels:
+        severity: warning
+        service: elevator-control-service
+      annotations:
+        summary: "High rate of elevator floor access denials"
+        description: "Elevator floor access denial rate is above 10 per minute for more than 2 minutes"

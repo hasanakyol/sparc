@@ -1,0 +1,415 @@
+# Service Entries for External Services
+# Allows controlled access to external services from within the mesh
+
+# AWS S3 Service Entry for video storage
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: aws-s3
+  namespace: sparc
+spec:
+  hosts:
+  - s3.amazonaws.com
+  - s3.us-east-1.amazonaws.com
+  - s3.us-west-2.amazonaws.com
+  - s3.eu-west-1.amazonaws.com
+  - s3.ap-southeast-1.amazonaws.com
+  - sparc-video-storage.s3.amazonaws.com
+  - sparc-backups.s3.amazonaws.com
+  - "*.s3.amazonaws.com"
+  - "*.s3-accelerate.amazonaws.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  - number: 80
+    name: http
+    protocol: HTTP
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# AWS Services - DynamoDB, SQS, SNS
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: aws-services
+  namespace: sparc
+spec:
+  hosts:
+  # DynamoDB
+  - dynamodb.us-east-1.amazonaws.com
+  - dynamodb.us-west-2.amazonaws.com
+  - dynamodb.eu-west-1.amazonaws.com
+  - "*.dynamodb.amazonaws.com"
+  # SQS
+  - sqs.us-east-1.amazonaws.com
+  - sqs.us-west-2.amazonaws.com
+  - "*.sqs.amazonaws.com"
+  # SNS
+  - sns.us-east-1.amazonaws.com
+  - sns.us-west-2.amazonaws.com
+  - "*.sns.amazonaws.com"
+  # CloudWatch
+  - monitoring.us-east-1.amazonaws.com
+  - logs.us-east-1.amazonaws.com
+  - "*.cloudwatch.amazonaws.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# Google Cloud Services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: google-cloud-services
+  namespace: sparc
+spec:
+  hosts:
+  # Cloud Storage
+  - storage.googleapis.com
+  - "*.storage.googleapis.com"
+  - sparc-video-bucket.storage.googleapis.com
+  # Cloud Vision API
+  - vision.googleapis.com
+  # Cloud Video Intelligence
+  - videointelligence.googleapis.com
+  # Cloud Pub/Sub
+  - pubsub.googleapis.com
+  # Firebase
+  - fcm.googleapis.com
+  - firebaseapp.com
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# Azure Services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: azure-services
+  namespace: sparc
+spec:
+  hosts:
+  # Blob Storage
+  - sparcvideos.blob.core.windows.net
+  - "*.blob.core.windows.net"
+  # Table Storage
+  - "*.table.core.windows.net"
+  # Queue Storage
+  - "*.queue.core.windows.net"
+  # Cosmos DB
+  - "*.documents.azure.com"
+  # Azure AD
+  - login.microsoftonline.com
+  - graph.microsoft.com
+  # Azure Monitor
+  - "*.monitor.azure.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# External Authentication Providers
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: auth-providers
+  namespace: sparc
+spec:
+  hosts:
+  # Auth0
+  - sparc.auth0.com
+  - "*.auth0.com"
+  - cdn.auth0.com
+  # Okta
+  - sparc.okta.com
+  - "*.okta.com"
+  - "*.oktacdn.com"
+  # Social login providers
+  - accounts.google.com
+  - oauth2.googleapis.com
+  - graph.facebook.com
+  - api.github.com
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# Email Services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: email-services
+  namespace: sparc
+spec:
+  hosts:
+  # SendGrid
+  - api.sendgrid.com
+  - smtp.sendgrid.net
+  # AWS SES
+  - email.us-east-1.amazonaws.com
+  - email-smtp.us-east-1.amazonaws.com
+  # Mailgun
+  - api.mailgun.net
+  - smtp.mailgun.org
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  - number: 587
+    name: smtp
+    protocol: TCP
+  - number: 25
+    name: smtp-legacy
+    protocol: TCP
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# SMS and Communication Services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: communication-services
+  namespace: sparc
+spec:
+  hosts:
+  # Twilio
+  - api.twilio.com
+  - "*.twilio.com"
+  # Vonage/Nexmo
+  - api.nexmo.com
+  - rest.nexmo.com
+  # Bandwidth
+  - api.bandwidth.com
+  # Push notifications
+  - fcm.googleapis.com
+  - "*.push.apple.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  - number: 2195
+    name: apns
+    protocol: TCP
+  - number: 2196
+    name: apns-feedback
+    protocol: TCP
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# AI/ML Services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: ai-ml-services
+  namespace: sparc
+spec:
+  hosts:
+  # OpenAI
+  - api.openai.com
+  # Google AI
+  - vision.googleapis.com
+  - language.googleapis.com
+  - videointelligence.googleapis.com
+  # Azure AI
+  - "*.cognitiveservices.azure.com"
+  - sparc-ml.azureml.net
+  - "*.azureml.net"
+  # AWS AI
+  - rekognition.us-east-1.amazonaws.com
+  - comprehend.us-east-1.amazonaws.com
+  - "*.sagemaker.amazonaws.com"
+  # Hugging Face
+  - api-inference.huggingface.co
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# External Monitoring and APM Services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: monitoring-services
+  namespace: sparc
+spec:
+  hosts:
+  # Datadog
+  - intake.datadoghq.com
+  - api.datadoghq.com
+  - "*.datadoghq.com"
+  # New Relic
+  - api.newrelic.com
+  - collector.newrelic.com
+  - "*.newrelic.com"
+  # Sentry
+  - sentry.io
+  - "*.sentry.io"
+  # PagerDuty
+  - api.pagerduty.com
+  - events.pagerduty.com
+  # StatusPage
+  - api.statuspage.io
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# Payment Processing Services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: payment-services
+  namespace: sparc
+spec:
+  hosts:
+  # Stripe
+  - api.stripe.com
+  - checkout.stripe.com
+  - "*.stripe.com"
+  # PayPal
+  - api.paypal.com
+  - "*.paypal.com"
+  # Square
+  - connect.squareup.com
+  - "*.squareup.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# CDN and Media Services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: cdn-services
+  namespace: sparc
+spec:
+  hosts:
+  # CloudFront
+  - "*.cloudfront.net"
+  # Cloudflare
+  - "*.cloudflare.com"
+  # Akamai
+  - "*.akamaihd.net"
+  # Fastly
+  - "*.fastly.net"
+  # Video streaming CDNs
+  - "*.youtube.com"
+  - "*.vimeo.com"
+  - "*.wistia.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  - number: 80
+    name: http
+    protocol: HTTP
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# Backup and Disaster Recovery Services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: backup-services
+  namespace: sparc
+spec:
+  hosts:
+  # AWS Backup
+  - backup.amazonaws.com
+  - "*.backup.amazonaws.com"
+  # Azure Backup
+  - "*.backup.azure.com"
+  # Google Cloud Backup
+  - backupdr.googleapis.com
+  # Third-party backup
+  - api.backblaze.com
+  - "*.wasabi.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# Compliance and Security Services
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: security-services
+  namespace: sparc
+spec:
+  hosts:
+  # Certificate authorities
+  - acme-v02.api.letsencrypt.org
+  - "*.digicert.com"
+  - "*.globalsign.com"
+  # Security scanning
+  - api.snyk.io
+  - "*.sonarcloud.io"
+  - api.veracode.com
+  # SIEM integration
+  - "*.sumologic.com"
+  - "*.splunk.com"
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# Destination Rules for External Services
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: external-services-tls
+  namespace: sparc
+spec:
+  host: "*.amazonaws.com"
+  trafficPolicy:
+    tls:
+      mode: SIMPLE
+      sni: true
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: external-services-circuit-breaker
+  namespace: sparc
+spec:
+  host: "*"
+  exportTo:
+  - "."
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+      http:
+        http1MaxPendingRequests: 10
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+        h2UpgradePolicy: UPGRADE
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30

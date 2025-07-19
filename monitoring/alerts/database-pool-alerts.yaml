@@ -1,0 +1,89 @@
+groups:
+  - name: database_connection_pool
+    interval: 30s
+    rules:
+      # Pool exhaustion alert
+      - alert: DatabasePoolExhausted
+        expr: database_pool_primary_idle == 0 and database_pool_primary_waiting > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: database
+          component: connection_pool
+        annotations:
+          summary: "Database connection pool exhausted"
+          description: "The primary database connection pool has no idle connections and {{ $value }} connections are waiting. This indicates pool exhaustion."
+          runbook_url: "https://wiki.sparc.io/runbooks/database-pool-exhausted"
+          
+      # High pool utilization alert
+      - alert: DatabasePoolHighUtilization
+        expr: (database_pool_primary_total - database_pool_primary_idle) / database_pool_primary_total > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+          component: connection_pool
+        annotations:
+          summary: "Database pool utilization above 80%"
+          description: "Database connection pool utilization is {{ $value | humanizePercentage }}. Consider increasing pool size."
+          
+      # Connection errors alert
+      - alert: DatabaseConnectionErrors
+        expr: rate(database_connection_errors[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+          component: connection_pool
+        annotations:
+          summary: "Database connection errors detected"
+          description: "Database is experiencing {{ $value | humanize }} connection errors per second."
+          
+      # Slow queries alert
+      - alert: DatabaseSlowQueries
+        expr: rate(database_queries_slow[5m]) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: database
+          component: query_performance
+        annotations:
+          summary: "High rate of slow database queries"
+          description: "Database is experiencing {{ $value | humanize }} slow queries per second (queries taking > 1s)."
+          
+      # Query error rate alert
+      - alert: DatabaseQueryErrors
+        expr: rate(database_queries_errors[5m]) / rate(database_queries_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+          component: query_performance
+        annotations:
+          summary: "High database query error rate"
+          description: "Database query error rate is {{ $value | humanizePercentage }}."
+          
+      # Database health check failure
+      - alert: DatabaseHealthCheckFailed
+        expr: database_pool_health == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: database
+          component: health_check
+        annotations:
+          summary: "Database health check failed"
+          description: "Database health check is failing. Primary or replica connections may be down."
+          runbook_url: "https://wiki.sparc.io/runbooks/database-health-check-failed"
+          
+      # Replica pool issues
+      - alert: DatabaseReplicaPoolIssue
+        expr: database_pool_replica_0_total > 0 and database_pool_replica_0_idle == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+          component: read_replica
+        annotations:
+          summary: "Database read replica pool exhausted"
+          description: "Read replica pool {{ $labels.replica }} has no idle connections."

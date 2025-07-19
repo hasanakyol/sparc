@@ -1,0 +1,593 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alert-service-config
+  namespace: sparc
+  labels:
+    app: alert-service
+    component: config
+data:
+  NODE_ENV: "production"
+  PORT: "3008"
+  LOG_LEVEL: "info"
+  METRICS_PORT: "9090"
+  HEALTH_CHECK_PORT: "8080"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  DATABASE_HOST: "postgres-service"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "sparc"
+  JWT_ALGORITHM: "RS256"
+  RATE_LIMIT_WINDOW_MS: "900000"
+  RATE_LIMIT_MAX_REQUESTS: "1000"
+  WEBSOCKET_ENABLED: "true"
+  WEBSOCKET_PORT: "3009"
+  ESCALATION_TIMEOUT_MINUTES: "15"
+  MAX_ESCALATION_LEVELS: "3"
+  NOTIFICATION_RETRY_ATTEMPTS: "3"
+  NOTIFICATION_RETRY_DELAY_MS: "5000"
+  ALERT_BATCH_SIZE: "100"
+  ALERT_PROCESSING_INTERVAL_MS: "1000"
+  EMERGENCY_ALERT_PRIORITY: "1"
+  HIGH_ALERT_PRIORITY: "2"
+  MEDIUM_ALERT_PRIORITY: "3"
+  LOW_ALERT_PRIORITY: "4"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-service
+  namespace: sparc
+  labels:
+    app: alert-service
+    version: v1
+    component: microservice
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: alert-service
+  template:
+    metadata:
+      labels:
+        app: alert-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: sparc-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: alert-service
+        image: sparc/alert-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3008
+          protocol: TCP
+        - name: websocket
+          containerPort: 3009
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: redis-url
+        - name: JWT_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: jwt-secret
+              key: private-key
+        - name: JWT_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: jwt-secret
+              key: public-key
+        - name: SMTP_HOST
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: smtp-host
+        - name: SMTP_PORT
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: smtp-port
+        - name: SMTP_USER
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: smtp-user
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: smtp-password
+        - name: TWILIO_ACCOUNT_SID
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: twilio-account-sid
+        - name: TWILIO_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: twilio-auth-token
+        - name: TWILIO_PHONE_NUMBER
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: twilio-phone-number
+        - name: FIREBASE_SERVER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: firebase-server-key
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: slack-webhook-url
+        - name: TEAMS_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: notification-secrets
+              key: teams-webhook-url
+        - name: EVENT_PROCESSING_SERVICE_URL
+          value: "http://event-processing-service:3007"
+        - name: ENVIRONMENTAL_SERVICE_URL
+          value: "http://environmental-service:3006"
+        - name: ACCESS_CONTROL_SERVICE_URL
+          value: "http://access-control-service:3002"
+        - name: VIDEO_MANAGEMENT_SERVICE_URL
+          value: "http://video-management-service:3004"
+        - name: DEVICE_MANAGEMENT_SERVICE_URL
+          value: "http://device-management-service:3005"
+        envFrom:
+        - configMapRef:
+            name: alert-service-config
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "300m"
+          limits:
+            memory: "1Gi"
+            cpu: "750m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /startup
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-service
+  namespace: sparc
+  labels:
+    app: alert-service
+    component: service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3008
+    targetPort: http
+    protocol: TCP
+  - name: websocket
+    port: 3009
+    targetPort: websocket
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: alert-service
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: alert-service-hpa
+  namespace: sparc
+  labels:
+    app: alert-service
+    component: autoscaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: alert-service
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 3
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: alert-service-pdb
+  namespace: sparc
+  labels:
+    app: alert-service
+    component: disruption-budget
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: alert-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alert-service-netpol
+  namespace: sparc
+  labels:
+    app: alert-service
+    component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: alert-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          app: web-frontend
+    - podSelector:
+        matchLabels:
+          app: event-processing-service
+    - podSelector:
+        matchLabels:
+          app: environmental-service
+    - podSelector:
+        matchLabels:
+          app: access-control-service
+    - podSelector:
+        matchLabels:
+          app: video-management-service
+    - podSelector:
+        matchLabels:
+          app: device-management-service
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+      podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 3008
+    - protocol: TCP
+      port: 3009
+    - protocol: TCP
+      port: 9090
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - podSelector:
+        matchLabels:
+          app: auth-service
+    ports:
+    - protocol: TCP
+      port: 3001
+  - to:
+    - podSelector:
+        matchLabels:
+          app: event-processing-service
+    ports:
+    - protocol: TCP
+      port: 3007
+  - to:
+    - podSelector:
+        matchLabels:
+          app: environmental-service
+    ports:
+    - protocol: TCP
+      port: 3006
+  - to:
+    - podSelector:
+        matchLabels:
+          app: access-control-service
+    ports:
+    - protocol: TCP
+      port: 3002
+  - to:
+    - podSelector:
+        matchLabels:
+          app: video-management-service
+    ports:
+    - protocol: TCP
+      port: 3004
+  - to:
+    - podSelector:
+        matchLabels:
+          app: device-management-service
+    ports:
+    - protocol: TCP
+      port: 3005
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 25
+    - protocol: TCP
+      port: 587
+    - protocol: TCP
+      port: 465
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: alert-service-monitor
+  namespace: sparc
+  labels:
+    app: alert-service
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: alert-service
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+  namespaceSelector:
+    matchNames:
+    - sparc
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: alert-service-alerts
+  namespace: sparc
+  labels:
+    app: alert-service
+    component: alerting
+spec:
+  groups:
+  - name: alert-service.rules
+    rules:
+    - alert: AlertServiceDown
+      expr: up{job="alert-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: alert-service
+      annotations:
+        summary: "Alert Service is down"
+        description: "Alert Service has been down for more than 1 minute"
+    
+    - alert: AlertServiceHighErrorRate
+      expr: rate(http_requests_total{job="alert-service",status=~"5.."}[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        service: alert-service
+      annotations:
+        summary: "High error rate in Alert Service"
+        description: "Alert Service error rate is {{ $value }} errors per second"
+    
+    - alert: AlertServiceHighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="alert-service"}[5m])) > 2
+      for: 5m
+      labels:
+        severity: warning
+        service: alert-service
+      annotations:
+        summary: "High latency in Alert Service"
+        description: "Alert Service 95th percentile latency is {{ $value }}s"
+    
+    - alert: AlertServiceHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"alert-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: alert-service
+      annotations:
+        summary: "High memory usage in Alert Service"
+        description: "Alert Service memory usage is above 90%"
+    
+    - alert: AlertServiceHighCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{pod=~"alert-service-.*"}[5m]) / container_spec_cpu_quota * 100 > 80
+      for: 5m
+      labels:
+        severity: warning
+        service: alert-service
+      annotations:
+        summary: "High CPU usage in Alert Service"
+        description: "Alert Service CPU usage is above 80%"
+    
+    - alert: AlertServiceReplicasNotReady
+      expr: kube_deployment_status_replicas_ready{deployment="alert-service"} < 2
+      for: 2m
+      labels:
+        severity: critical
+        service: alert-service
+      annotations:
+        summary: "Alert Service has insufficient ready replicas"
+        description: "Alert Service has {{ $value }} ready replicas, minimum required is 2"
+    
+    - alert: AlertServiceWebSocketConnectionsHigh
+      expr: websocket_connections_total{job="alert-service"} > 2000
+      for: 5m
+      labels:
+        severity: warning
+        service: alert-service
+      annotations:
+        summary: "High WebSocket connections in Alert Service"
+        description: "Alert Service has {{ $value }} active WebSocket connections"
+    
+    - alert: AlertServiceDatabaseConnectionsHigh
+      expr: database_connections_active{job="alert-service"} > 75
+      for: 5m
+      labels:
+        severity: warning
+        service: alert-service
+      annotations:
+        summary: "High database connections in Alert Service"
+        description: "Alert Service has {{ $value }} active database connections"
+    
+    - alert: AlertServiceNotificationFailureRate
+      expr: rate(alert_notifications_failed_total{job="alert-service"}[5m]) / rate(alert_notifications_total{job="alert-service"}[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: critical
+        service: alert-service
+      annotations:
+        summary: "High notification failure rate in Alert Service"
+        description: "Alert Service notification failure rate is {{ $value | humanizePercentage }}"
+    
+    - alert: AlertServiceEscalationQueueHigh
+      expr: alert_escalation_queue_size{job="alert-service"} > 100
+      for: 5m
+      labels:
+        severity: warning
+        service: alert-service
+      annotations:
+        summary: "High escalation queue size in Alert Service"
+        description: "Alert Service has {{ $value }} alerts in escalation queue"
+    
+    - alert: AlertServiceProcessingLag
+      expr: alert_processing_lag_seconds{job="alert-service"} > 30
+      for: 5m
+      labels:
+        severity: warning
+        service: alert-service
+      annotations:
+        summary: "High alert processing lag in Alert Service"
+        description: "Alert Service processing lag is {{ $value }}s"
+    
+    - alert: AlertServiceEmergencyAlertsBlocked
+      expr: increase(alert_emergency_blocked_total{job="alert-service"}[5m]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: alert-service
+      annotations:
+        summary: "Emergency alerts blocked in Alert Service"
+        description: "{{ $value }} emergency alerts have been blocked in the last 5 minutes"

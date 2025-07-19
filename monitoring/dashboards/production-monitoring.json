@@ -1,0 +1,603 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "sparc-alb" ],
+          [ ".", "RequestCount", ".", "." ],
+          [ ".", "HTTPCode_Target_2XX_Count", ".", "." ],
+          [ ".", "HTTPCode_Target_4XX_Count", ".", "." ],
+          [ ".", "HTTPCode_Target_5XX_Count", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Application Load Balancer Metrics",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Response Time Alert Threshold",
+              "value": 2000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/ECS", "CPUUtilization", "ServiceName", "sparc-access-control-service" ],
+          [ ".", "MemoryUtilization", ".", "." ],
+          [ ".", "CPUUtilization", "ServiceName", "sparc-video-service" ],
+          [ ".", "MemoryUtilization", ".", "." ],
+          [ ".", "CPUUtilization", "ServiceName", "sparc-notification-service" ],
+          [ ".", "MemoryUtilization", ".", "." ],
+          [ ".", "CPUUtilization", "ServiceName", "sparc-environmental-service" ],
+          [ ".", "MemoryUtilization", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Microservices Resource Utilization",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "CPU Alert Threshold",
+              "value": 80
+            },
+            {
+              "label": "Memory Alert Threshold", 
+              "value": 85
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "sparc-primary-db" ],
+          [ ".", "DatabaseConnections", ".", "." ],
+          [ ".", "ReadLatency", ".", "." ],
+          [ ".", "WriteLatency", ".", "." ],
+          [ ".", "FreeableMemory", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Database Performance",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "DB CPU Alert",
+              "value": 75
+            },
+            {
+              "label": "Read Latency Alert",
+              "value": 0.2
+            },
+            {
+              "label": "Write Latency Alert",
+              "value": 0.2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/ElastiCache", "CPUUtilization", "CacheClusterId", "sparc-redis-cluster" ],
+          [ ".", "CacheHits", ".", "." ],
+          [ ".", "CacheMisses", ".", "." ],
+          [ ".", "NetworkBytesIn", ".", "." ],
+          [ ".", "NetworkBytesOut", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Redis Cache Performance",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Cache CPU Alert",
+              "value": 80
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/AccessControl", "DoorAccessAttempts", "TenantId", "ALL" ],
+          [ ".", "SuccessfulAccess", ".", "." ],
+          [ ".", "FailedAccess", ".", "." ],
+          [ ".", "UnauthorizedAttempts", ".", "." ],
+          [ ".", "CredentialValidations", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Access Control Operations",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Failed Access Alert",
+              "value": 100
+            },
+            {
+              "label": "Unauthorized Alert",
+              "value": 50
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 12,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/Video", "ActiveStreams", "TenantId", "ALL" ],
+          [ ".", "StreamBitrate", ".", "." ],
+          [ ".", "StreamLatency", ".", "." ],
+          [ ".", "DroppedFrames", ".", "." ],
+          [ ".", "RecordingStorage", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Video Streaming Performance",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Max Concurrent Streams",
+              "value": 1000
+            },
+            {
+              "label": "Latency Alert",
+              "value": 500
+            },
+            {
+              "label": "Dropped Frames Alert",
+              "value": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 12,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/Environmental", "TemperatureSensors", "TenantId", "ALL" ],
+          [ ".", "HumiditySensors", ".", "." ],
+          [ ".", "MotionDetectors", ".", "." ],
+          [ ".", "SmokeDetectors", ".", "." ],
+          [ ".", "SensorOffline", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Environmental Monitoring",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Offline Sensors Alert",
+              "value": 10
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 18,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/Security", "SecurityEvents", "Severity", "HIGH" ],
+          [ ".", "SecurityEvents", "Severity", "MEDIUM" ],
+          [ ".", "SecurityEvents", "Severity", "LOW" ],
+          [ ".", "AuthenticationFailures", "TenantId", "ALL" ],
+          [ ".", "SuspiciousActivity", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Security Events",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "High Severity Alert",
+              "value": 5
+            },
+            {
+              "label": "Auth Failures Alert",
+              "value": 20
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 18,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/MultiTenant", "TenantResourceUsage", "ResourceType", "CPU" ],
+          [ ".", "TenantResourceUsage", "ResourceType", "Memory" ],
+          [ ".", "TenantResourceUsage", "ResourceType", "Storage" ],
+          [ ".", "TenantResourceUsage", "ResourceType", "Bandwidth" ],
+          [ ".", "ActiveTenants", "TenantId", "ALL" ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Multi-Tenant Resource Usage",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 18,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/Offline", "OfflineDevices", "TenantId", "ALL" ],
+          [ ".", "MeshNetworkNodes", ".", "." ],
+          [ ".", "QueuedEvents", ".", "." ],
+          [ ".", "SyncPendingEvents", ".", "." ],
+          [ ".", "ConnectivityStatus", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Offline Resilience & Mesh Network",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Offline Devices Alert",
+              "value": 50
+            },
+            {
+              "label": "Queued Events Alert",
+              "value": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "log",
+      "x": 0,
+      "y": 24,
+      "width": 24,
+      "height": 6,
+      "properties": {
+        "query": "SOURCE '/aws/ecs/sparc-access-control-service' | fields @timestamp, @message\n| filter @message like /ERROR/\n| sort @timestamp desc\n| limit 100",
+        "region": "us-east-1",
+        "title": "Recent Error Logs - Access Control Service",
+        "view": "table"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 30,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/API", "RequestLatency", "Service", "access-control" ],
+          [ ".", "RequestLatency", "Service", "video" ],
+          [ ".", "RequestLatency", "Service", "notification" ],
+          [ ".", "RequestLatency", "Service", "environmental" ],
+          [ ".", "RequestLatency", "Service", "visitor" ],
+          [ ".", "RequestLatency", "Service", "reporting" ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "API Response Times",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "API Latency Alert",
+              "value": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 6,
+      "y": 30,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/API", "RequestCount", "Service", "access-control" ],
+          [ ".", "RequestCount", "Service", "video" ],
+          [ ".", "RequestCount", "Service", "notification" ],
+          [ ".", "RequestCount", "Service", "environmental" ],
+          [ ".", "RequestCount", "Service", "visitor" ],
+          [ ".", "RequestCount", "Service", "reporting" ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "API Request Volume",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 30,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/API", "ErrorRate", "Service", "access-control" ],
+          [ ".", "ErrorRate", "Service", "video" ],
+          [ ".", "ErrorRate", "Service", "notification" ],
+          [ ".", "ErrorRate", "Service", "environmental" ],
+          [ ".", "ErrorRate", "Service", "visitor" ],
+          [ ".", "ErrorRate", "Service", "reporting" ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "API Error Rates",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Error Rate Alert",
+              "value": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 18,
+      "y": 30,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/Scalability", "ConcurrentUsers", "TenantId", "ALL" ],
+          [ ".", "ActiveDoors", ".", "." ],
+          [ ".", "ConcurrentVideoStreams", ".", "." ],
+          [ ".", "DatabaseConnections", ".", "." ],
+          [ ".", "QueueDepth", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Platform Scalability Metrics",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Max Doors (10K)",
+              "value": 10000
+            },
+            {
+              "label": "Max Video Streams (1K)",
+              "value": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 36,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/Mobile", "CredentialDownloads", "TenantId", "ALL" ],
+          [ ".", "CredentialValidations", ".", "." ],
+          [ ".", "MobileAppSessions", ".", "." ],
+          [ ".", "OfflineCredentialUsage", ".", "." ],
+          [ ".", "CredentialRevocations", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Mobile Credential Management",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 36,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/Visitor", "VisitorRegistrations", "TenantId", "ALL" ],
+          [ ".", "VisitorCheckIns", ".", "." ],
+          [ ".", "VisitorCheckOuts", ".", "." ],
+          [ ".", "TempCredentialsIssued", ".", "." ],
+          [ ".", "VisitorOverstays", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Visitor Management",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Overstay Alert",
+              "value": 10
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 36,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/Compliance", "AuditLogEntries", "TenantId", "ALL" ],
+          [ ".", "ComplianceViolations", ".", "." ],
+          [ ".", "DataRetentionEvents", ".", "." ],
+          [ ".", "PrivacyRequests", ".", "." ],
+          [ ".", "RegulatoryReports", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Compliance & Audit",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Compliance Violations Alert",
+              "value": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 42,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/S3", "BucketSizeBytes", "BucketName", "sparc-video-storage", "StorageType", "StandardStorage" ],
+          [ ".", "NumberOfObjects", ".", ".", ".", "." ],
+          [ "AWS/S3", "BucketSizeBytes", "BucketName", "sparc-audit-logs", "StorageType", "StandardStorage" ],
+          [ ".", "NumberOfObjects", ".", ".", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Storage Utilization",
+        "period": 3600
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 42,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "SPARC/Integration", "ExternalAPIRequests", "Provider", "ALL" ],
+          [ ".", "ExternalAPILatency", ".", "." ],
+          [ ".", "ExternalAPIErrors", ".", "." ],
+          [ ".", "WebhookDeliveries", ".", "." ],
+          [ ".", "WebhookFailures", ".", "." ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "External Integrations",
+        "period": 300,
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "External API Error Alert",
+              "value": 10
+            },
+            {
+              "label": "Webhook Failure Alert",
+              "value": 5
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "annotations": {
+    "horizontal": [
+      {
+        "color": "#d62728",
+        "label": "Critical Alert Threshold",
+        "value": 95,
+        "fill": "above"
+      },
+      {
+        "color": "#ff7f0e", 
+        "label": "Warning Alert Threshold",
+        "value": 80,
+        "fill": "above"
+      }
+    ]
+  },
+  "period": 300,
+  "stat": "Average",
+  "region": "us-east-1",
+  "title": "SPARC Platform - Production Monitoring Dashboard",
+  "start": "-PT3H",
+  "end": "PT0H"
+}

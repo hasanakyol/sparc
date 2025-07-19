@@ -1,0 +1,560 @@
+# Deny all traffic by default - Zero Trust approach
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all-default
+  namespace: istio-system
+spec:
+  {}
+  # This creates a default deny-all policy for the entire mesh
+---
+# Allow health checks from kubelet and monitoring
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-health-checks-global
+  namespace: istio-system
+spec:
+  action: ALLOW
+  rules:
+  - to:
+    - operation:
+        paths: ["/health", "/healthz", "/ready", "/readyz", "/livez", "/metrics"]
+  - from:
+    - source:
+        principals: ["cluster.local/ns/kube-system/sa/kubelet"]
+  - when:
+    - key: source.ip
+      values: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]  # Cluster CIDR
+---
+# Allow API Gateway to receive external traffic
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-api-gateway-ingress
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/istio-ingress/sa/istio-ingressgateway-service-account"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+  - when:
+    - key: request.headers[x-forwarded-proto]
+      values: ["https"]
+---
+# Allow Auth Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-auth-service-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-service
+  action: ALLOW
+  rules:
+  # From API Gateway
+  - from:
+    - source:
+        principals: ["cluster.local/ns/sparc/sa/api-gateway"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/api/auth/*", "/auth/*"]
+  # From other services for token validation
+  - from:
+    - source:
+        namespaces: ["sparc"]
+    to:
+    - operation:
+        methods: ["POST"]
+        paths: ["/api/auth/validate", "/api/auth/refresh"]
+---
+# Allow Video Management Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-video-management-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: video-management-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: 
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/analytics-service"
+        - "cluster.local/ns/sparc/sa/event-processing-service"
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE", "HEAD"]
+        paths: ["/api/video/*", "/api/cameras/*", "/api/recordings/*", "/api/streams/*"]
+---
+# Allow Access Control Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-access-control-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: access-control-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/mobile-credential-service"
+        - "cluster.local/ns/sparc/sa/visitor-management-service"
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/api/access-control/*", "/api/doors/*", "/api/credentials/*"]
+---
+# Allow Analytics Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-analytics-service-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: analytics-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: 
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/reporting-service"
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/analytics/*", "/api/reports/*"]
+---
+# Allow Device Management Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-device-management-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: device-management-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/maintenance-service"
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/api/devices/*", "/api/device-discovery/*"]
+---
+# Allow Event Processing Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-event-processing-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: event-processing-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: 
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/access-control-service"
+        - "cluster.local/ns/sparc/sa/video-management-service"
+        - "cluster.local/ns/sparc/sa/analytics-service"
+        - "cluster.local/ns/sparc/sa/device-management-service"
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/events/*", "/api/alerts/*"]
+---
+# Allow Mobile Credential Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-mobile-credential-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mobile-credential-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/access-control-service"
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/api/mobile-credentials/*"]
+---
+# Allow Tenant Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-tenant-service-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tenant-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/auth-service"  # For tenant context
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/api/tenants/*", "/api/organizations/*", "/api/sites/*"]
+---
+# Allow Visitor Management Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-visitor-management-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: visitor-management-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/access-control-service"
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/api/visitors/*"]
+---
+# Allow Reporting Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-reporting-service-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: reporting-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/reporting/*", "/api/exports/*"]
+---
+# Allow Alert Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-alert-service-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alert-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/event-processing-service"
+        - "cluster.local/ns/sparc/sa/analytics-service"
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/api/alerts/*", "/api/notifications/*"]
+---
+# Allow Environmental Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-environmental-service-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: environmental-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/analytics-service"
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/environmental/*", "/api/sensors/*"]
+---
+# Allow Integration Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-integration-service-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: integration-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/api/integrations/*"]
+---
+# Allow Maintenance Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-maintenance-service-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: maintenance-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+        - "cluster.local/ns/sparc/sa/device-management-service"
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/api/maintenance/*"]
+---
+# Allow Security Compliance Service access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-security-compliance-access
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: security-compliance-service
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/sparc/sa/api-gateway"
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/compliance/*", "/api/security/*"]
+---
+# Allow Database access from SPARC services
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-postgresql-access
+  namespace: database
+spec:
+  selector:
+    matchLabels:
+      app: postgresql
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["sparc"]
+    to:
+    - operation:
+        ports: ["5432"]
+  - when:
+    - key: source.workload.name
+      notValues: ["test-runner", "load-generator"]  # Block test workloads
+---
+# Allow Redis access from SPARC services
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-redis-access
+  namespace: database
+spec:
+  selector:
+    matchLabels:
+      app: redis
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["sparc"]
+    to:
+    - operation:
+        ports: ["6379"]
+  - when:
+    - key: source.workload.name
+      notValues: ["test-runner", "load-generator"]  # Block test workloads
+---
+# Allow Prometheus to scrape metrics globally
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-prometheus-scraping-global
+  namespace: istio-system
+spec:
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/monitoring/sa/prometheus"]
+    to:
+    - operation:
+        paths: ["/stats/prometheus", "/metrics", "/federate"]
+        methods: ["GET"]
+---
+# Allow Grafana to access data sources
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-grafana-datasources
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: prometheus
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/monitoring/sa/grafana"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/*", "/query", "/query_range"]
+---
+# Allow Jaeger access for tracing
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-jaeger-access
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: jaeger
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["sparc", "istio-system"]
+    to:
+    - operation:
+        ports: ["9411", "14268"]  # Zipkin and Jaeger collector ports
+---
+# Allow Kiali access to Istio components
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-kiali-access
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      app: istiod
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/monitoring/sa/kiali"]
+    to:
+    - operation:
+        methods: ["GET"]
+        paths: ["/api/*"]
+---
+# JWT-based authorization for external API access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: require-jwt-for-api
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        requestPrincipals: ["*"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
+        paths: ["/api/*"]
+    when:
+    - key: request.auth.claims[iss]
+      values: ["https://auth.sparc.io"]
+    - key: request.auth.claims[aud]
+      values: ["sparc-api"]
+  # Allow OPTIONS for CORS
+  - to:
+    - operation:
+        methods: ["OPTIONS"]
+---
+# Rate limiting authorization policy
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: rate-limit-by-user
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  action: CUSTOM
+  provider:
+    name: "ratelimit"
+  rules:
+  - to:
+    - operation:
+        paths: ["/api/*"]
+    when:
+    - key: request.headers[x-user-id]
+      values: ["*"]

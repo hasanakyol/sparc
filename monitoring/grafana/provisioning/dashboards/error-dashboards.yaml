@@ -1,0 +1,24 @@
+apiVersion: 1
+
+providers:
+  - name: 'Error Monitoring Dashboards'
+    orgId: 1
+    folder: 'Error Monitoring'
+    folderUid: error-monitoring
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/error-monitoring
+  
+  - name: 'SLA and Error Budgets'
+    orgId: 1
+    folder: 'SLA Monitoring'
+    folderUid: sla-monitoring
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/sla-monitoring

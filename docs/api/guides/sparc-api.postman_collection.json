@@ -1,0 +1,1092 @@
+{
+  "info": {
+    "name": "SPARC Security Platform API",
+    "description": "Complete API collection for the SPARC Security Platform. This collection includes all endpoints for authentication, video management, access control, analytics, and more.\n\n## Getting Started\n\n1. Set up environment variables:\n   - `base_url`: API base URL (e.g., https://api.sparc.security/v1)\n   - `email`: Your email address\n   - `password`: Your password\n   - `organization_id`: Your organization ID\n\n2. Run the 'Login' request first to obtain tokens\n\n3. The collection automatically handles token management\n\n## Features\n\n- Automatic token refresh\n- Pre-request scripts for authentication\n- Test scripts for response validation\n- Example requests for all endpoints\n- Environment variable management",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global pre-request script",
+          "// Add X-Tenant-ID header to all requests",
+          "if (pm.environment.get('organization_id')) {",
+          "    pm.request.headers.add({",
+          "        key: 'X-Tenant-ID',",
+          "        value: pm.environment.get('organization_id')",
+          "    });",
+          "}",
+          "",
+          "// Add request ID for tracing",
+          "pm.request.headers.add({",
+          "    key: 'X-Request-ID',",
+          "    value: pm.variables.replaceIn('{{$guid}}')",
+          "});"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global test script",
+          "// Check for deprecation warnings",
+          "if (pm.response.headers.has('X-API-Deprecation-Date')) {",
+          "    console.warn('API Deprecation Warning:', {",
+          "        endpoint: pm.request.url.toString(),",
+          "        deprecationDate: pm.response.headers.get('X-API-Deprecation-Date'),",
+          "        info: pm.response.headers.get('X-API-Deprecation-Info')",
+          "    });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    ",
+                  "    // Store tokens",
+                  "    pm.environment.set('access_token', response.accessToken);",
+                  "    pm.environment.set('user_id', response.user.id);",
+                  "    pm.environment.set('organization_id', response.user.organizationId);",
+                  "    ",
+                  "    // Store expiry time",
+                  "    const expiryTime = new Date().getTime() + (response.expiresIn * 1000);",
+                  "    pm.environment.set('token_expiry', expiryTime);",
+                  "    ",
+                  "    // Extract refresh token from cookie",
+                  "    const refreshCookie = pm.response.headers.find(h => h.key === 'Set-Cookie' && h.value.includes('refreshToken'));",
+                  "    if (refreshCookie) {",
+                  "        const refreshToken = refreshCookie.value.split('=')[1].split(';')[0];",
+                  "        pm.environment.set('refresh_token', refreshToken);",
+                  "    }",
+                  "    ",
+                  "    pm.test('Login successful', () => {",
+                  "        pm.response.to.have.status(200);",
+                  "        pm.expect(response).to.have.property('accessToken');",
+                  "        pm.expect(response).to.have.property('user');",
+                  "    });",
+                  "} else if (pm.response.code === 202) {",
+                  "    // MFA required",
+                  "    const response = pm.response.json();",
+                  "    pm.environment.set('mfa_session_id', response.sessionId);",
+                  "    ",
+                  "    pm.test('MFA required', () => {",
+                  "        pm.response.to.have.status(202);",
+                  "        pm.expect(response).to.have.property('sessionId');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"rememberMe\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Authenticate with email and password to obtain access token"
+          }
+        },
+        {
+          "name": "Verify MFA",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    ",
+                  "    pm.environment.set('access_token', response.accessToken);",
+                  "    pm.environment.set('user_id', response.user.id);",
+                  "    ",
+                  "    pm.test('MFA verification successful', () => {",
+                  "        pm.response.to.have.status(200);",
+                  "        pm.expect(response).to.have.property('accessToken');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{mfa_session_id}}\",\n  \"code\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/mfa/verify",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "mfa", "verify"]
+            },
+            "description": "Complete MFA verification"
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    ",
+                  "    pm.environment.set('access_token', response.accessToken);",
+                  "    ",
+                  "    const expiryTime = new Date().getTime() + (response.expiresIn * 1000);",
+                  "    pm.environment.set('token_expiry', expiryTime);",
+                  "    ",
+                  "    pm.test('Token refreshed successfully', () => {",
+                  "        pm.response.to.have.status(200);",
+                  "        pm.expect(response).to.have.property('accessToken');",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Add refresh token as cookie",
+                  "if (pm.environment.get('refresh_token')) {",
+                  "    pm.request.headers.add({",
+                  "        key: 'Cookie',",
+                  "        value: `refreshToken=${pm.environment.get('refresh_token')}`",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/refresh",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "refresh"]
+            },
+            "description": "Refresh access token using refresh token"
+          }
+        },
+        {
+          "name": "Get Profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Profile retrieved successfully', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const profile = pm.response.json();",
+                  "    pm.expect(profile).to.have.property('id');",
+                  "    pm.expect(profile).to.have.property('email');",
+                  "    pm.expect(profile).to.have.property('organizationId');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/profile",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "profile"]
+            },
+            "description": "Get current user profile"
+          }
+        },
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Logout successful', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "// Clear stored tokens",
+                  "pm.environment.unset('access_token');",
+                  "pm.environment.unset('refresh_token');",
+                  "pm.environment.unset('token_expiry');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "logout"]
+            },
+            "description": "Logout and invalidate tokens"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Video Management",
+      "item": [
+        {
+          "name": "List Cameras",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Cameras retrieved successfully', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('cameras');",
+                  "    pm.expect(response.cameras).to.be.an('array');",
+                  "    ",
+                  "    // Store first camera ID for subsequent requests",
+                  "    if (response.cameras.length > 0) {",
+                  "        pm.environment.set('camera_id', response.cameras[0].id);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/video/cameras?status=online&pageSize=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "video", "cameras"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "online"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                },
+                {
+                  "key": "siteId",
+                  "value": "{{site_id}}",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get list of all cameras"
+          }
+        },
+        {
+          "name": "Get Camera Details",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Camera details retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const camera = pm.response.json();",
+                  "    pm.expect(camera).to.have.property('id');",
+                  "    pm.expect(camera).to.have.property('name');",
+                  "    pm.expect(camera).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/video/cameras/{{camera_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "video", "cameras", "{{camera_id}}"]
+            },
+            "description": "Get specific camera details"
+          }
+        },
+        {
+          "name": "Get Live Stream",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Live stream URL retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const stream = pm.response.json();",
+                  "    pm.expect(stream).to.have.property('urls');",
+                  "    pm.expect(stream).to.have.property('protocol');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/video/streams/{{camera_id}}/live?protocol=hls&quality=auto",
+              "host": ["{{base_url}}"],
+              "path": ["api", "video", "streams", "{{camera_id}}", "live"],
+              "query": [
+                {
+                  "key": "protocol",
+                  "value": "hls",
+                  "description": "Streaming protocol (hls, webrtc, rtsp)"
+                },
+                {
+                  "key": "quality",
+                  "value": "auto",
+                  "description": "Stream quality (high, medium, low, auto)"
+                }
+              ]
+            },
+            "description": "Get live stream URL for camera"
+          }
+        },
+        {
+          "name": "Search Recordings",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Set time range for last 24 hours",
+                  "const endTime = new Date();",
+                  "const startTime = new Date();",
+                  "startTime.setDate(startTime.getDate() - 1);",
+                  "",
+                  "pm.variables.set('start_time', startTime.toISOString());",
+                  "pm.variables.set('end_time', endTime.toISOString());"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Recordings retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('recordings');",
+                  "    ",
+                  "    if (response.recordings.length > 0) {",
+                  "        pm.environment.set('recording_id', response.recordings[0].id);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/video/recordings?cameraId={{camera_id}}&startTime={{start_time}}&endTime={{end_time}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "video", "recordings"],
+              "query": [
+                {
+                  "key": "cameraId",
+                  "value": "{{camera_id}}"
+                },
+                {
+                  "key": "startTime",
+                  "value": "{{start_time}}"
+                },
+                {
+                  "key": "endTime",
+                  "value": "{{end_time}}"
+                },
+                {
+                  "key": "hasEvents",
+                  "value": "true",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Search for video recordings"
+          }
+        },
+        {
+          "name": "Export Video Clip",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Export job created', () => {",
+                  "    pm.response.to.have.status(202);",
+                  "    ",
+                  "    const job = pm.response.json();",
+                  "    pm.expect(job).to.have.property('id');",
+                  "    pm.expect(job).to.have.property('status');",
+                  "    ",
+                  "    pm.environment.set('export_job_id', job.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cameraId\": \"{{camera_id}}\",\n  \"startTime\": \"{{start_time}}\",\n  \"endTime\": \"{{end_time}}\",\n  \"format\": \"mp4\",\n  \"quality\": \"high\",\n  \"watermark\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/video/exports",
+              "host": ["{{base_url}}"],
+              "path": ["api", "video", "exports"]
+            },
+            "description": "Create video export job"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Access Control",
+      "item": [
+        {
+          "name": "List Access Points",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Access points retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('accessPoints');",
+                  "    ",
+                  "    if (response.accessPoints.length > 0) {",
+                  "        pm.environment.set('access_point_id', response.accessPoints[0].id);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/access/access-points?type=door",
+              "host": ["{{base_url}}"],
+              "path": ["api", "access", "access-points"],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "door",
+                  "description": "Filter by type (door, gate, turnstile)"
+                },
+                {
+                  "key": "status",
+                  "value": "online",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get list of access points (doors, gates, etc.)"
+          }
+        },
+        {
+          "name": "Unlock Door",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Door control command sent', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('success');",
+                  "    pm.expect(response.success).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"command\": \"momentary_unlock\",\n  \"duration\": 5,\n  \"reason\": \"Remote unlock for visitor\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/access/access-points/{{access_point_id}}/control",
+              "host": ["{{base_url}}"],
+              "path": ["api", "access", "access-points", "{{access_point_id}}", "control"]
+            },
+            "description": "Send control command to access point"
+          }
+        },
+        {
+          "name": "List Credentials",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Credentials retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('credentials');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/access/credentials?status=active",
+              "host": ["{{base_url}}"],
+              "path": ["api", "access", "credentials"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "active"
+                },
+                {
+                  "key": "type",
+                  "value": "badge",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get list of access credentials"
+          }
+        },
+        {
+          "name": "Get Access Events",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Set time range for last 24 hours",
+                  "const endTime = new Date();",
+                  "const startTime = new Date();",
+                  "startTime.setDate(startTime.getDate() - 1);",
+                  "",
+                  "pm.variables.set('start_time', startTime.toISOString());",
+                  "pm.variables.set('end_time', endTime.toISOString());"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Access events retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('events');",
+                  "    pm.expect(response).to.have.property('pagination');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/access/events?startTime={{start_time}}&endTime={{end_time}}&pageSize=50",
+              "host": ["{{base_url}}"],
+              "path": ["api", "access", "events"],
+              "query": [
+                {
+                  "key": "startTime",
+                  "value": "{{start_time}}"
+                },
+                {
+                  "key": "endTime",
+                  "value": "{{end_time}}"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50"
+                },
+                {
+                  "key": "outcome",
+                  "value": "denied",
+                  "description": "Filter by outcome (granted, denied)",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get access control events"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analytics",
+      "item": [
+        {
+          "name": "Get Real-time Metrics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Metrics retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('metrics');",
+                  "    pm.expect(response).to.have.property('timestamp');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/metrics/realtime?metrics=active_incidents,online_cameras,active_users,occupancy",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "metrics", "realtime"],
+              "query": [
+                {
+                  "key": "metrics",
+                  "value": "active_incidents,online_cameras,active_users,occupancy"
+                },
+                {
+                  "key": "siteId",
+                  "value": "{{site_id}}",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get current real-time metrics"
+          }
+        },
+        {
+          "name": "Get Historical Metrics",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Set time range for last 7 days",
+                  "const endTime = new Date();",
+                  "const startTime = new Date();",
+                  "startTime.setDate(startTime.getDate() - 7);",
+                  "",
+                  "pm.variables.set('start_time', startTime.toISOString());",
+                  "pm.variables.set('end_time', endTime.toISOString());"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Historical data retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('data');",
+                  "    pm.expect(response.data).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/analytics/metrics/historical?metric=active_incidents&startTime={{start_time}}&endTime={{end_time}}&granularity=day",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "metrics", "historical"],
+              "query": [
+                {
+                  "key": "metric",
+                  "value": "active_incidents"
+                },
+                {
+                  "key": "startTime",
+                  "value": "{{start_time}}"
+                },
+                {
+                  "key": "endTime",
+                  "value": "{{end_time}}"
+                },
+                {
+                  "key": "granularity",
+                  "value": "day",
+                  "description": "Data granularity (minute, hour, day)"
+                },
+                {
+                  "key": "aggregation",
+                  "value": "avg",
+                  "description": "Aggregation method",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get historical metric data"
+          }
+        },
+        {
+          "name": "Generate Report",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Report generation started', () => {",
+                  "    pm.response.to.have.status(202);",
+                  "    ",
+                  "    const job = pm.response.json();",
+                  "    pm.expect(job).to.have.property('id');",
+                  "    pm.expect(job).to.have.property('status');",
+                  "    ",
+                  "    pm.environment.set('report_job_id', job.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"templateId\": \"security-summary\",\n  \"parameters\": {\n    \"startDate\": \"2024-01-01\",\n    \"endDate\": \"2024-01-31\",\n    \"includeAllSites\": true\n  },\n  \"format\": \"pdf\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/analytics/reports/generate",
+              "host": ["{{base_url}}"],
+              "path": ["api", "analytics", "reports", "generate"]
+            },
+            "description": "Generate analytics report"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tenant Management",
+      "item": [
+        {
+          "name": "Get Organization",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Organization retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const org = pm.response.json();",
+                  "    pm.expect(org).to.have.property('id');",
+                  "    pm.expect(org).to.have.property('name');",
+                  "    pm.expect(org).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/tenant/organizations/{{organization_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "tenant", "organizations", "{{organization_id}}"]
+            },
+            "description": "Get organization details"
+          }
+        },
+        {
+          "name": "List Sites",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Sites retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response).to.have.property('sites');",
+                  "    ",
+                  "    if (response.sites.length > 0) {",
+                  "        pm.environment.set('site_id', response.sites[0].id);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/tenant/sites",
+              "host": ["{{base_url}}"],
+              "path": ["api", "tenant", "sites"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "active",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Get all sites for organization"
+          }
+        },
+        {
+          "name": "Get Tenant Settings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Settings retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const settings = pm.response.json();",
+                  "    pm.expect(settings).to.have.property('general');",
+                  "    pm.expect(settings).to.have.property('security');",
+                  "    pm.expect(settings).to.have.property('notifications');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/tenant/settings",
+              "host": ["{{base_url}}"],
+              "path": ["api", "tenant", "settings"]
+            },
+            "description": "Get tenant configuration settings"
+          }
+        },
+        {
+          "name": "Get Resource Usage",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Resource usage retrieved', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    ",
+                  "    const usage = pm.response.json();",
+                  "    pm.expect(usage).to.have.property('users');",
+                  "    pm.expect(usage).to.have.property('cameras');",
+                  "    pm.expect(usage).to.have.property('storage');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/tenant/resources/usage",
+              "host": ["{{base_url}}"],
+              "path": ["api", "tenant", "resources", "usage"]
+            },
+            "description": "Get current resource usage vs limits"
+          }
+        }
+      ]
+    },
+    {
+      "name": "WebSocket Events",
+      "item": [
+        {
+          "name": "WebSocket Connection Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ws",
+              "host": ["{{base_url}}"],
+              "path": ["ws"]
+            },
+            "description": "WebSocket endpoint information. Connect using:\n\nwss://api.sparc.security/v1/ws?token={{access_token}}\n\nSubscribe to channels:\n{\n  \"type\": \"subscribe\",\n  \"channel\": \"alerts\",\n  \"filters\": {\n    \"severity\": [\"high\", \"critical\"]\n  }\n}"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://api.sparc.security/v1",
+      "type": "string"
+    },
+    {
+      "key": "email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "organization_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "camera_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "site_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "access_point_id",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

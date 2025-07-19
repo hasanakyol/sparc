@@ -1,0 +1,847 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Core tenant model for multi-tenant architecture
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  domain    String   @unique
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  organizations         Organization[]
+  users                User[]
+  sites                Site[]
+  accessEvents         AccessEvent[]
+  accessPanels         AccessPanel[]
+  credentials          Credential[]
+  accessGroups         AccessGroup[]
+  schedules            Schedule[]
+  alerts               Alert[]
+  auditLogs            AuditLog[]
+  videoRecordings      VideoRecording[]
+  visitors             Visitor[]
+  maintenanceWorkOrders MaintenanceWorkOrder[]
+  incidentReports      IncidentReport[]
+  environmentalSensors EnvironmentalSensor[]
+  environmentalReadings EnvironmentalReading[]
+  mobileCredentials    MobileCredential[]
+  privacyMasks         PrivacyMask[]
+  videoExportLogs      VideoExportLog[]
+  elevatorControls     ElevatorControl[]
+  systemConfigurations SystemConfiguration[]
+  offlineEventQueues   OfflineEventQueue[]
+  policyTemplates      PolicyTemplate[]
+  offlineOperationLogs OfflineOperationLog[]
+  certificates         Certificate[]
+  backupJobs           BackupJob[]
+  integrationConfigurations IntegrationConfiguration[]
+
+  @@map("tenants")
+}
+
+model Organization {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  name        String
+  description String?
+  address     Json     @default("{}")
+  contactInfo Json     @default("{}") @map("contact_info")
+  settings    Json     @default("{}")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sites  Site[]
+
+  @@index([tenantId])
+  @@map("organizations")
+}
+
+model Site {
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  organizationId String   @map("organization_id")
+  name           String
+  address        Json     @default("{}")
+  timezone       String
+  settings       Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  buildings    Building[]
+
+  @@index([tenantId])
+  @@index([organizationId])
+  @@map("sites")
+}
+
+model Building {
+  id         String   @id @default(cuid())
+  siteId     String   @map("site_id")
+  name       String
+  floors     Int
+  floorPlans Json     @default("[]") @map("floor_plans")
+  settings   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  site            Site             @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  floors          Floor[]
+  elevatorControls ElevatorControl[]
+
+  @@index([siteId])
+  @@map("buildings")
+}
+
+model Floor {
+  id         String   @id @default(cuid())
+  buildingId String   @map("building_id")
+  level      Int
+  name       String
+  floorPlan  String?  @map("floor_plan")
+  zones      Json     @default("[]")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  building             Building             @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  doors                Door[]
+  cameras              Camera[]
+  zones_rel            Zone[]
+  accessPanels         AccessPanel[]
+  environmentalSensors EnvironmentalSensor[]
+
+  @@index([buildingId])
+  @@map("floors")
+}
+
+model Zone {
+  id          String   @id @default(cuid())
+  floorId     String   @map("floor_id")
+  name        String
+  description String?
+  zoneType    String   @map("zone_type")
+  boundaries  Json     @default("[]")
+  accessRules Json     @default("{}") @map("access_rules")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  floor                Floor                @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  doors                Door[]
+  cameras              Camera[]
+  environmentalSensors EnvironmentalSensor[]
+
+  @@index([floorId])
+  @@map("zones")
+}
+
+model Door {
+  id        String   @id @default(cuid())
+  floorId   String   @map("floor_id")
+  zoneId    String?  @map("zone_id")
+  name      String
+  location  Json     @default("{}")
+  hardware  Json     @default("{}")
+  settings  Json     @default("{}")
+  status    String   @default("unknown")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  floor        Floor         @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  zone         Zone?         @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  accessEvents AccessEvent[]
+  cardReaders  CardReader[]
+
+  @@index([floorId])
+  @@index([zoneId])
+  @@map("doors")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  username    String
+  email       String
+  passwordHash String  @map("password_hash")
+  roles       Json     @default("[]")
+  permissions Json     @default("{}")
+  active      Boolean  @default(true)
+  
+  // MFA fields
+  mfaEnabled     Boolean  @default(false) @map("mfa_enabled")
+  mfaSecret      String?  @map("mfa_secret")
+  mfaBackupCodes Json?    @map("mfa_backup_codes")
+  mfaRecoveryCode String? @map("mfa_recovery_code")
+  mfaVerifiedAt   DateTime? @map("mfa_verified_at")
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  credentials           Credential[]
+  accessEvents          AccessEvent[]
+  auditLogs             AuditLog[]
+  visitors              Visitor[]
+  maintenanceWorkOrders MaintenanceWorkOrder[]
+  incidentReports       IncidentReport[]
+  mobileCredentials     MobileCredential[]
+  videoExportLogs       VideoExportLog[]
+  privacyMasks          PrivacyMask[]
+  systemConfigurations  SystemConfiguration[]
+
+  @@unique([tenantId, username])
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model Camera {
+  id        String   @id @default(cuid())
+  floorId   String   @map("floor_id")
+  zoneId    String?  @map("zone_id")
+  name      String
+  location  Json     @default("{}")
+  hardware  Json     @default("{}")
+  settings  Json     @default("{}")
+  status    String   @default("unknown")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  floor           Floor            @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  zone            Zone?            @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  videoRecordings VideoRecording[]
+  privacyMasks    PrivacyMask[]
+
+  @@index([floorId])
+  @@index([zoneId])
+  @@map("cameras")
+}
+
+model AccessEvent {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  doorId       String   @map("door_id")
+  userId       String?  @map("user_id")
+  credentialId String?  @map("credential_id")
+  eventType    String   @map("event_type")
+  result       String
+  timestamp    DateTime
+  metadata     Json     @default("{}")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relationships
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  door       Door        @relation(fields: [doorId], references: [id], onDelete: Cascade)
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  credential Credential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([doorId])
+  @@index([userId])
+  @@index([timestamp])
+  @@map("access_events")
+}
+
+model AccessPanel {
+  id              String   @id @default(cuid())
+  tenantId        String   @map("tenant_id")
+  floorId         String   @map("floor_id")
+  name            String
+  ipAddress       String   @map("ip_address")
+  manufacturer    String
+  model           String
+  firmwareVersion String   @map("firmware_version")
+  protocol        String
+  status          String   @default("unknown")
+  lastHeartbeat   DateTime? @map("last_heartbeat")
+  settings        Json     @default("{}")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  floor       Floor        @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  cardReaders CardReader[]
+
+  @@index([tenantId])
+  @@index([floorId])
+  @@map("access_panels")
+}
+
+model CardReader {
+  id               String   @id @default(cuid())
+  panelId          String   @map("panel_id")
+  doorId           String   @map("door_id")
+  name             String
+  readerType       String   @map("reader_type")
+  supportedFormats Json     @default("[]") @map("supported_formats")
+  settings         Json     @default("{}")
+  status           String   @default("unknown")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  panel AccessPanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
+  door  Door        @relation(fields: [doorId], references: [id], onDelete: Cascade)
+
+  @@index([panelId])
+  @@index([doorId])
+  @@map("card_readers")
+}
+
+model Credential {
+  id                  String   @id @default(cuid())
+  tenantId            String   @map("tenant_id")
+  userId              String   @map("user_id")
+  credentialType      String   @map("credential_type")
+  cardNumber          String?  @map("card_number")
+  cardNumberHash      String?  @map("card_number_hash") // For searching
+  facilityCode        String?  @map("facility_code")
+  pinCode             String?  @map("pin_code") // Encrypted
+  pinCodeHash         String?  @map("pin_code_hash") // For validation
+  biometricTemplate   String?  @map("biometric_template") // Encrypted
+  mobileCredentialId  String?  @map("mobile_credential_id")
+  encryptionVersion   Int      @default(1) @map("encryption_version")
+  active              Boolean  @default(true)
+  expiresAt           DateTime? @map("expires_at")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessEvents AccessEvent[]
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([cardNumber])
+  @@index([cardNumberHash])
+  @@index([pinCodeHash])
+  @@map("credentials")
+}
+
+model AccessGroup {
+  id            String   @id @default(cuid())
+  tenantId      String   @map("tenant_id")
+  name          String
+  description   String?
+  parentGroupId String?  @map("parent_group_id")
+  permissions   Json     @default("{}")
+  schedules     Json     @default("[]")
+  doors         Json     @default("[]")
+  users         Json     @default("[]")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parentGroup AccessGroup?  @relation("AccessGroupHierarchy", fields: [parentGroupId], references: [id], onDelete: SetNull)
+  childGroups AccessGroup[] @relation("AccessGroupHierarchy")
+
+  @@index([tenantId])
+  @@index([parentGroupId])
+  @@map("access_groups")
+}
+
+model Schedule {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  name        String
+  description String?
+  timeZones   Json     @default("[]") @map("time_zones")
+  holidays    Json     @default("[]")
+  exceptions  Json     @default("[]")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("schedules")
+}
+
+model Alert {
+  id              String    @id @default(cuid())
+  tenantId        String    @map("tenant_id")
+  alertType       String    @map("alert_type")
+  priority        String
+  sourceId        String    @map("source_id")
+  sourceType      String    @map("source_type")
+  message         String
+  details         Json      @default("{}")
+  status          String    @default("open")
+  acknowledgedBy  String?   @map("acknowledged_by")
+  acknowledgedAt  DateTime? @map("acknowledged_at")
+  resolvedAt      DateTime? @map("resolved_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+  @@map("alerts")
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  userId       String?  @map("user_id")
+  action       String
+  resourceType String   @map("resource_type")
+  resourceId   String   @map("resource_id")
+  details      Json     @default("{}")
+  ipAddress    String   @map("ip_address")
+  userAgent    String   @map("user_agent")
+  timestamp    DateTime @default(now())
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([timestamp])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+model VideoRecording {
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  cameraId       String   @map("camera_id")
+  startTime      DateTime @map("start_time")
+  endTime        DateTime @map("end_time")
+  filePath       String   @map("file_path")
+  fileSize       BigInt   @map("file_size")
+  resolution     String
+  frameRate      Int      @map("frame_rate")
+  triggerEventId String?  @map("trigger_event_id")
+  metadata       Json     @default("{}")
+  status         String   @default("recording")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  camera Camera @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([cameraId])
+  @@index([startTime])
+  @@index([endTime])
+  @@map("video_recordings")
+}
+
+model Visitor {
+  id                   String    @id @default(cuid())
+  tenantId             String    @map("tenant_id")
+  name                 String
+  email                String?
+  phone                String?
+  company              String?
+  hostUserId           String    @map("host_user_id")
+  visitPurpose         String    @map("visit_purpose")
+  scheduledArrival     DateTime  @map("scheduled_arrival")
+  scheduledDeparture   DateTime  @map("scheduled_departure")
+  actualArrival        DateTime? @map("actual_arrival")
+  actualDeparture      DateTime? @map("actual_departure")
+  temporaryCredentials Json      @default("[]") @map("temporary_credentials")
+  status               String    @default("scheduled")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  hostUser User   @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([hostUserId])
+  @@index([status])
+  @@map("visitors")
+}
+
+model MaintenanceWorkOrder {
+  id             String    @id @default(cuid())
+  tenantId       String    @map("tenant_id")
+  deviceId       String    @map("device_id")
+  deviceType     String    @map("device_type")
+  workOrderType  String    @map("work_order_type")
+  priority       String
+  title          String
+  description    String
+  assignedTo     String?   @map("assigned_to")
+  scheduledDate  DateTime? @map("scheduled_date")
+  completedDate  DateTime? @map("completed_date")
+  diagnosticData Json      @default("{}") @map("diagnostic_data")
+  partsUsed      Json      @default("[]") @map("parts_used")
+  laborHours     Float?    @map("labor_hours")
+  status         String    @default("open")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant     Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedUser User? @relation(fields: [assignedTo], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([deviceId])
+  @@index([status])
+  @@map("maintenance_work_orders")
+}
+
+model IncidentReport {
+  id                String    @id @default(cuid())
+  tenantId          String    @map("tenant_id")
+  incidentType      String    @map("incident_type")
+  severity          String
+  location          Json      @default("{}")
+  description       String
+  relatedEvents     Json      @default("[]") @map("related_events")
+  relatedRecordings Json      @default("[]") @map("related_recordings")
+  assignedTo        String?   @map("assigned_to")
+  status            String    @default("open")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  resolvedAt        DateTime? @map("resolved_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedUser User?  @relation(fields: [assignedTo], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([severity])
+  @@map("incident_reports")
+}
+
+model EnvironmentalSensor {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  floorId      String   @map("floor_id")
+  zoneId       String?  @map("zone_id")
+  name         String
+  sensorType   String   @map("sensor_type")
+  location     Json     @default("{}")
+  hardware     Json     @default("{}")
+  thresholds   Json     @default("{}")
+  status       String   @default("unknown")
+  lastReading  DateTime? @map("last_reading")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  floor                Floor                 @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  zone                 Zone?                 @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  environmentalReadings EnvironmentalReading[]
+
+  @@index([tenantId])
+  @@index([floorId])
+  @@index([zoneId])
+  @@map("environmental_sensors")
+}
+
+model EnvironmentalReading {
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  sensorId       String   @map("sensor_id")
+  temperature    Float?
+  humidity       Float?
+  leakDetected   Boolean? @map("leak_detected")
+  timestamp      DateTime
+  alertTriggered Boolean  @default(false) @map("alert_triggered")
+
+  // Relationships
+  tenant Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sensor EnvironmentalSensor @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([sensorId])
+  @@index([timestamp])
+  @@map("environmental_readings")
+}
+
+model MobileCredential {
+  id              String    @id @default(cuid())
+  tenantId        String    @map("tenant_id")
+  userId          String    @map("user_id")
+  deviceId        String    @map("device_id")
+  deviceIdHash    String    @map("device_id_hash") // For searching
+  deviceType      String    @map("device_type")
+  platform        String
+  credentialData  String    @map("credential_data") // Encrypted
+  encryptionVersion Int     @default(1) @map("encryption_version")
+  enrollmentDate  DateTime  @map("enrollment_date")
+  lastUsed        DateTime? @map("last_used")
+  revoked         Boolean   @default(false)
+  revokedAt       DateTime? @map("revoked_at")
+  offlineCapable  Boolean   @default(true) @map("offline_capable")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([deviceId])
+  @@index([deviceIdHash])
+  @@map("mobile_credentials")
+}
+
+model PrivacyMask {
+  id          String   @id @default(cuid())
+  cameraId    String   @map("camera_id")
+  tenantId    String   @map("tenant_id")
+  name        String
+  coordinates Json     @default("[]")
+  maskType    String   @map("mask_type")
+  active      Boolean  @default(true)
+  createdBy   String   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  camera    Camera @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdByUser User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([cameraId])
+  @@map("privacy_masks")
+}
+
+model VideoExportLog {
+  id               String   @id @default(cuid())
+  tenantId         String   @map("tenant_id")
+  userId           String   @map("user_id")
+  cameraIds        Json     @default("[]") @map("camera_ids")
+  startTime        DateTime @map("start_time")
+  endTime          DateTime @map("end_time")
+  exportFormat     String   @map("export_format")
+  exportPurpose    String   @map("export_purpose")
+  filePath         String   @map("file_path")
+  fileSize         BigInt   @map("file_size")
+  watermarkApplied Boolean  @default(false) @map("watermark_applied")
+  chainOfCustody   Json     @default("{}") @map("chain_of_custody")
+  status           String   @default("pending")
+  createdAt        DateTime @default(now()) @map("created_at")
+  exportedAt       DateTime? @map("exported_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([status])
+  @@map("video_export_logs")
+}
+
+model ElevatorControl {
+  id               String   @id @default(cuid())
+  tenantId         String   @map("tenant_id")
+  buildingId       String   @map("building_id")
+  name             String
+  floorsServed     Json     @default("[]") @map("floors_served")
+  ipAddress        String   @map("ip_address")
+  protocol         String
+  manufacturer     String
+  accessRules      Json     @default("{}") @map("access_rules")
+  emergencyOverride Boolean @default(false) @map("emergency_override")
+  status           String   @default("unknown")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([buildingId])
+  @@map("elevator_controls")
+}
+
+model SystemConfiguration {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  category    String
+  key         String
+  value       Json
+  description String?
+  updatedBy   String   @map("updated_by")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relationships
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  updatedByUser User @relation(fields: [updatedBy], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, category, key])
+  @@index([tenantId])
+  @@map("system_configurations")
+}
+
+model OfflineEventQueue {
+  id            String    @id @default(cuid())
+  deviceId      String    @map("device_id")
+  tenantId      String    @map("tenant_id")
+  eventType     String    @map("event_type")
+  eventData     Json      @map("event_data")
+  timestamp     DateTime
+  synchronized  Boolean   @default(false)
+  syncTimestamp DateTime? @map("sync_timestamp")
+  priority      Int       @default(0)
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([deviceId])
+  @@index([synchronized])
+  @@index([priority])
+  @@map("offline_event_queue")
+}
+
+model PolicyTemplate {
+  id                  String   @id @default(cuid())
+  tenantId            String   @map("tenant_id")
+  name                String
+  description         String?
+  policyType          String   @map("policy_type")
+  templateData        Json     @default("{}") @map("template_data")
+  complianceFramework String   @map("compliance_framework")
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([policyType])
+  @@map("policy_templates")
+}
+
+model OfflineOperationLog {
+  id                  String    @id @default(cuid())
+  tenantId            String    @map("tenant_id")
+  deviceId            String    @map("device_id")
+  deviceType          String    @map("device_type")
+  offlineStart        DateTime  @map("offline_start")
+  offlineEnd          DateTime? @map("offline_end")
+  cachedPermissions   Json      @default("{}") @map("cached_permissions")
+  eventsDuringOffline Json      @default("[]") @map("events_during_offline")
+  syncStatus          String    @default("pending") @map("sync_status")
+  syncCompletedAt     DateTime? @map("sync_completed_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([deviceId])
+  @@index([syncStatus])
+  @@map("offline_operation_logs")
+}
+
+model Certificate {
+  id            String   @id @default(cuid())
+  tenantId      String   @map("tenant_id")
+  certificateType String @map("certificate_type")
+  subject       String
+  issuer        String
+  serialNumber  String   @map("serial_number")
+  validFrom     DateTime @map("valid_from")
+  validTo       DateTime @map("valid_to")
+  fingerprint   String
+  autoRenewal   Boolean  @default(false) @map("auto_renewal")
+  status        String   @default("active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([validTo])
+  @@index([status])
+  @@map("certificates")
+}
+
+model BackupJob {
+  id              String   @id @default(cuid())
+  tenantId        String   @map("tenant_id")
+  backupType      String   @map("backup_type")
+  schedule        String
+  lastRun         DateTime? @map("last_run")
+  nextRun         DateTime @map("next_run")
+  status          String   @default("scheduled")
+  backupSize      BigInt?  @map("backup_size")
+  retentionDays   Int      @map("retention_days")
+  storageLocation String   @map("storage_location")
+  encryptionEnabled Boolean @default(true) @map("encryption_enabled")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([nextRun])
+  @@index([status])
+  @@map("backup_jobs")
+}
+
+model IntegrationConfiguration {
+  id             String    @id @default(cuid())
+  tenantId       String    @map("tenant_id")
+  integrationType String   @map("integration_type")
+  name           String
+  endpointUrl    String    @map("endpoint_url")
+  authentication String    @default("{}") // Encrypted JSON
+  configuration  Json      @default("{}")
+  encryptionVersion Int    @default(1) @map("encryption_version")
+  active         Boolean   @default(true)
+  lastSync       DateTime? @map("last_sync")
+  syncStatus     String    @default("pending") @map("sync_status")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([integrationType])
+  @@index([active])
+  @@map("integration_configurations")
+}

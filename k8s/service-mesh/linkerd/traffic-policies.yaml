@@ -1,0 +1,204 @@
+# Service Profiles for Linkerd Traffic Management
+apiVersion: linkerd.io/v1alpha2
+kind: ServiceProfile
+metadata:
+  name: api-gateway
+  namespace: sparc
+spec:
+  # Retry policy
+  retryBudget:
+    retryRatio: 0.2
+    minRetriesPerSecond: 10
+    ttl: 10s
+  
+  # Routes configuration
+  routes:
+  - name: health-check
+    condition:
+      method: GET
+      pathRegex: "/health.*"
+    timeout: 5s
+  
+  - name: auth-endpoints
+    condition:
+      method: POST
+      pathRegex: "/api/v1/auth/.*"
+    timeout: 10s
+    retries:
+      limit: 3
+      backoff:
+        minMs: 25
+        maxMs: 250
+        jitterRatio: 0.25
+  
+  - name: video-endpoints
+    condition:
+      method: GET
+      pathRegex: "/api/v1/video/.*"
+    timeout: 30s
+    retries:
+      limit: 2
+  
+  - name: analytics-endpoints
+    condition:
+      method: POST
+      pathRegex: "/api/v1/analytics/.*"
+    timeout: 60s
+---
+# Video Processor Service Profile
+apiVersion: linkerd.io/v1alpha2
+kind: ServiceProfile
+metadata:
+  name: video-processor
+  namespace: sparc
+spec:
+  retryBudget:
+    retryRatio: 0.1
+    minRetriesPerSecond: 5
+    ttl: 10s
+  
+  routes:
+  - name: live-stream
+    condition:
+      method: GET
+      pathRegex: "/live/.*"
+    timeout: 0s  # No timeout for streaming
+  
+  - name: video-upload
+    condition:
+      method: POST
+      pathRegex: "/upload/.*"
+    timeout: 300s
+  
+  - name: transcode
+    condition:
+      method: POST
+      pathRegex: "/transcode/.*"
+    timeout: 600s
+    retries:
+      limit: 1
+---
+# Traffic Split for Canary Deployment
+apiVersion: split.smi-spec.io/v1alpha1
+kind: TrafficSplit
+metadata:
+  name: api-gateway-canary
+  namespace: sparc
+spec:
+  service: api-gateway
+  backends:
+  - service: api-gateway-v1
+    weight: 90
+  - service: api-gateway-v2
+    weight: 10
+---
+# Traffic Split for A/B Testing
+apiVersion: split.smi-spec.io/v1alpha1
+kind: TrafficSplit
+metadata:
+  name: analytics-ab-test
+  namespace: sparc
+spec:
+  service: analytics-service
+  matches:
+  - headers:
+      x-user-group: beta
+  backends:
+  - service: analytics-service-v1
+    weight: 0
+  - service: analytics-service-v2
+    weight: 100
+---
+# Server Authorization Policy
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: api-gateway-authz
+  namespace: sparc
+spec:
+  server:
+    name: api-gateway
+  client:
+    meshTLS:
+      serviceAccounts:
+      - name: web-frontend
+        namespace: sparc
+      - name: mobile-app
+        namespace: sparc
+---
+# Server Authorization for Database Access
+apiVersion: policy.linkerd.io/v1beta1
+kind: ServerAuthorization
+metadata:
+  name: database-authz
+  namespace: database
+spec:
+  server:
+    name: postgresql
+  client:
+    meshTLS:
+      serviceAccounts:
+      - name: api-gateway
+        namespace: sparc
+      - name: auth-service
+        namespace: sparc
+      - name: video-processor
+        namespace: sparc
+      - name: analytics-service
+        namespace: sparc
+---
+# Network Authentication Policy
+apiVersion: policy.linkerd.io/v1beta1
+kind: NetworkAuthentication
+metadata:
+  name: sparc-services-mtls
+  namespace: sparc
+spec:
+  meshTLS:
+    mode: required
+---
+# Server Policy for API Gateway
+apiVersion: policy.linkerd.io/v1beta1
+kind: Server
+metadata:
+  name: api-gateway
+  namespace: sparc
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  port: 3000
+  proxyProtocol: "HTTP/2"
+---
+# HTTPRoute for advanced routing
+apiVersion: policy.linkerd.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: api-gateway-route
+  namespace: sparc
+spec:
+  parentRefs:
+  - name: api-gateway
+    namespace: sparc
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1/auth
+    backendRefs:
+    - name: auth-service
+      port: 3001
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1/video
+    backendRefs:
+    - name: video-processor
+      port: 3002
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1/analytics
+    backendRefs:
+    - name: analytics-service
+      port: 3005

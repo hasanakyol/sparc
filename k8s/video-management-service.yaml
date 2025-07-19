@@ -1,0 +1,595 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: video-management-config
+  namespace: sparc
+  labels:
+    app: video-management-service
+    component: config
+data:
+  NODE_ENV: "production"
+  PORT: "3003"
+  LOG_LEVEL: "info"
+  VIDEO_STORAGE_PATH: "/tmp/video-processing"
+  EXPORT_PATH: "/tmp/video-exports"
+  THUMBNAIL_PATH: "/tmp/thumbnails"
+  HLS_PATH: "/tmp/hls"
+  MAX_CONCURRENT_STREAMS: "50"
+  VIDEO_RETENTION_DAYS: "30"
+  STREAMING_BUFFER_SIZE: "8192"
+  RECORDING_QUALITY: "high"
+  THUMBNAIL_GENERATION: "true"
+  MOTION_DETECTION: "true"
+  VIDEO_COMPRESSION: "h264"
+  MAX_RECORDING_DURATION: "3600"
+  # FFmpeg configuration
+  FFMPEG_THREADS: "4"
+  FFMPEG_PRESET: "medium"
+  FFMPEG_CRF: "23"
+  FFMPEG_GOP_SIZE: "30"
+  FFMPEG_KEYINT_MIN: "30"
+  # HLS streaming configuration
+  HLS_TIME: "2"
+  HLS_LIST_SIZE: "3"
+  HLS_FLAGS: "delete_segments"
+  # Video analytics configuration
+  ANALYTICS_ENABLED: "true"
+  MOTION_SENSITIVITY: "75"
+  TAMPER_DETECTION: "true"
+  LINE_CROSSING_DETECTION: "true"
+  # Performance tuning
+  VIDEO_PROCESSING_WORKERS: "4"
+  STREAM_TIMEOUT: "30"
+  RECORDING_BUFFER_SIZE: "16384"
+  # CloudFront configuration
+  CDN_ENABLED: "true"
+  VIDEO_CDN_CACHE_TTL: "300"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: video-storage-pvc
+  namespace: sparc
+  labels:
+    app: video-management-service
+    component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: gp3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-management-service
+  namespace: sparc
+  labels:
+    app: video-management-service
+    component: backend
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: video-management-service
+  template:
+    metadata:
+      labels:
+        app: video-management-service
+        component: backend
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3003"
+        prometheus.io/path: "/metrics"
+        video.sparc.io/streaming-optimized: "true"
+        video.sparc.io/buffer-size: "8192"
+    spec:
+      serviceAccountName: video-management-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: video-management-service
+        image: sparc/video-management-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3003
+          protocol: TCP
+        - name: rtsp
+          containerPort: 554
+          protocol: TCP
+        - name: rtmp
+          containerPort: 1935
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: video-management-config
+              key: NODE_ENV
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: video-management-config
+              key: PORT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: video-management-config
+              key: LOG_LEVEL
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: jwt-secret
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: aws-region
+        - name: S3_VIDEO_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: s3-video-bucket
+        - name: S3_BACKUP_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: s3-backup-bucket
+        - name: CLOUDFRONT_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: cloudfront-domain
+        - name: CLOUDFRONT_DISTRIBUTION_ID
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: cloudfront-distribution-id
+        - name: KMS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: kms-key-id
+        - name: OPENSEARCH_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: opensearch-endpoint
+        - name: SNS_ALERTS_TOPIC_ARN
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: sns-alerts-topic-arn
+        - name: SQS_VIDEO_QUEUE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: sqs-video-queue-url
+        envFrom:
+        - configMapRef:
+            name: video-management-config
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+            ephemeral-storage: "5Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+            ephemeral-storage: "20Gi"
+        volumeMounts:
+        - name: video-storage
+          mountPath: /tmp/video-processing
+        - name: video-exports
+          mountPath: /tmp/video-exports
+        - name: thumbnails
+          mountPath: /tmp/thumbnails
+        - name: hls-storage
+          mountPath: /tmp/hls
+        - name: tmp
+          mountPath: /tmp
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 15
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 20
+          successThreshold: 1
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+      - name: video-storage
+        persistentVolumeClaim:
+          claimName: video-storage-pvc
+      - name: video-exports
+        emptyDir:
+          sizeLimit: 10Gi
+      - name: thumbnails
+        emptyDir:
+          sizeLimit: 5Gi
+      - name: hls-storage
+        emptyDir:
+          sizeLimit: 15Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 20Gi
+      nodeSelector:
+        node-type: video
+      tolerations:
+      - key: "video-processing"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-type
+                operator: In
+                values:
+                - video
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: instance-type
+                operator: In
+                values:
+                - c5n.xlarge
+                - c5n.2xlarge
+                - c5n.4xlarge
+          - weight: 80
+            preference:
+              matchExpressions:
+              - key: network-performance
+                operator: In
+                values:
+                - high
+                - enhanced
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - video-management-service
+              topologyKey: kubernetes.io/hostname
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: component
+                  operator: In
+                  values:
+                  - video-processing
+              topologyKey: topology.kubernetes.io/zone
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: video-management-service
+  namespace: sparc
+  labels:
+    app: video-management-service
+    component: backend
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3003
+    targetPort: http
+    protocol: TCP
+  - name: rtsp
+    port: 554
+    targetPort: rtsp
+    protocol: TCP
+  - name: rtmp
+    port: 1935
+    targetPort: rtmp
+    protocol: TCP
+  selector:
+    app: video-management-service
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: video-management-service-hpa
+  namespace: sparc
+  labels:
+    app: video-management-service
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: video-management-service
+  minReplicas: 2
+  maxReplicas: 15
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      selectPolicy: Min
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: video-management-service-pdb
+  namespace: sparc
+  labels:
+    app: video-management-service
+    component: availability
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: video-management-service
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: video-management-service-netpol
+  namespace: sparc
+  labels:
+    app: video-management-service
+    component: security
+spec:
+  podSelector:
+    matchLabels:
+      app: video-management-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          app: web-frontend
+    ports:
+    - protocol: TCP
+      port: 3003
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    ports:
+    - protocol: TCP
+      port: 554
+    - protocol: TCP
+      port: 1935
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: video-management-service
+  namespace: sparc
+  labels:
+    app: video-management-service
+    component: security
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/sparc-video-management-service-role
+automountServiceAccountToken: true
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: video-management-service-monitor
+  namespace: sparc
+  labels:
+    app: video-management-service
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: video-management-service
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: video-management-service-alerts
+  namespace: sparc
+  labels:
+    app: video-management-service
+    component: monitoring
+spec:
+  groups:
+  - name: video-management-service
+    rules:
+    - alert: VideoServiceHighCPU
+      expr: rate(container_cpu_usage_seconds_total{pod=~"video-management-service-.*"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: video-management-service
+      annotations:
+        summary: "Video Management Service high CPU usage"
+        description: "Video Management Service CPU usage is above 80% for more than 5 minutes"
+    
+    - alert: VideoServiceHighMemory
+      expr: container_memory_usage_bytes{pod=~"video-management-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: video-management-service
+      annotations:
+        summary: "Video Management Service high memory usage"
+        description: "Video Management Service memory usage is above 90% for more than 5 minutes"
+    
+    - alert: VideoServiceDown
+      expr: up{job="video-management-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: video-management-service
+      annotations:
+        summary: "Video Management Service is down"
+        description: "Video Management Service has been down for more than 1 minute"
+    
+    - alert: VideoStreamingLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="video-management-service", endpoint=~"/stream.*"}[5m])) > 0.5
+      for: 3m
+      labels:
+        severity: warning
+        service: video-management-service
+      annotations:
+        summary: "High video streaming latency"
+        description: "95th percentile latency for video streaming is above 500ms for more than 3 minutes"
+    
+    - alert: VideoRecordingFailures
+      expr: rate(video_recording_failures_total[5m]) > 0.1
+      for: 2m
+      labels:
+        severity: warning
+        service: video-management-service
+      annotations:
+        summary: "High video recording failure rate"
+        description: "Video recording failure rate is above 10% for more than 2 minutes"
+    
+    - alert: VideoStorageSpaceLow
+      expr: (1 - (node_filesystem_avail_bytes{mountpoint="/tmp/video-processing"} / node_filesystem_size_bytes{mountpoint="/tmp/video-processing"})) > 0.85
+      for: 5m
+      labels:
+        severity: warning
+        service: video-management-service
+      annotations:
+        summary: "Video storage space running low"
+        description: "Video storage space usage is above 85% for more than 5 minutes"
+    
+    - alert: ConcurrentStreamsHigh
+      expr: video_concurrent_streams > 45
+      for: 3m
+      labels:
+        severity: warning
+        service: video-management-service
+      annotations:
+        summary: "High number of concurrent video streams"
+        description: "Number of concurrent video streams is above 45 for more than 3 minutes"

@@ -1,0 +1,251 @@
+# Global mTLS configuration - Strict mode for zero-trust security
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system
+spec:
+  mtls:
+    mode: STRICT
+---
+# SPARC Services - Strict mTLS for all microservices
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: sparc-services-mtls
+  namespace: sparc
+spec:
+  mtls:
+    mode: STRICT
+---
+# API Gateway - Special configuration for external traffic
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: api-gateway-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  mtls:
+    mode: STRICT
+  # Allow plain text on specific port for health checks
+  portLevelMtls:
+    8080:
+      mode: DISABLE  # Health check port
+---
+# Video Streaming Service - Optimized for performance
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: video-service-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: video-management-service
+  mtls:
+    mode: STRICT
+---
+# Auth Service - Extra strict security
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: auth-service-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-service
+  mtls:
+    mode: STRICT
+---
+# Access Control Service - Critical security service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: access-control-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: access-control-service
+  mtls:
+    mode: STRICT
+---
+# Analytics Service - Strict mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: analytics-service-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: analytics-service
+  mtls:
+    mode: STRICT
+---
+# Device Management Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: device-management-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: device-management-service
+  mtls:
+    mode: STRICT
+---
+# Event Processing Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: event-processing-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: event-processing-service
+  mtls:
+    mode: STRICT
+---
+# Mobile Credential Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: mobile-credential-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mobile-credential-service
+  mtls:
+    mode: STRICT
+---
+# Tenant Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: tenant-service-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tenant-service
+  mtls:
+    mode: STRICT
+---
+# Visitor Management Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: visitor-management-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: visitor-management-service
+  mtls:
+    mode: STRICT
+---
+# Reporting Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: reporting-service-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: reporting-service
+  mtls:
+    mode: STRICT
+---
+# Alert Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: alert-service-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alert-service
+  mtls:
+    mode: STRICT
+---
+# Environmental Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: environmental-service-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: environmental-service
+  mtls:
+    mode: STRICT
+---
+# Integration Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: integration-service-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: integration-service
+  mtls:
+    mode: STRICT
+---
+# Maintenance Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: maintenance-service-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: maintenance-service
+  mtls:
+    mode: STRICT
+---
+# Security Compliance Service
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: security-compliance-mtls
+  namespace: sparc
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: security-compliance-service
+  mtls:
+    mode: STRICT
+---
+# Monitoring namespace - Permissive for Prometheus scraping
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: monitoring-mtls
+  namespace: monitoring
+spec:
+  mtls:
+    mode: PERMISSIVE
+---
+# Database namespace - No mesh injection but configure if needed
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: database-mtls
+  namespace: database
+spec:
+  mtls:
+    mode: DISABLE  # Databases handle their own TLS

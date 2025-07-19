@@ -1,0 +1,2962 @@
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { logger } from 'hono/logger';
+import { prettyJSON } from 'hono/pretty-json';
+import { HTTPException } from 'hono/http-exception';
+import { serve } from '@hono/node-server';
+import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
+import Redis from 'ioredis';
+import { PrismaClient } from '@prisma/client';
+import { z } from 'zod';
+import ffmpeg from 'fluent-ffmpeg';
+import { EventEmitter } from 'events';
+import WebSocket from 'ws';
+import { createHash, randomUUID } from 'crypto';
+import { promises as fs } from 'fs';
+import path from 'path';
+
+// Test utilities and mocks for comprehensive testing
+export const testUtils = {
+  // Mock factories for test data
+  createMockCamera: (overrides: Partial<Camera> = {}): Camera => ({
+    id: randomUUID(),
+    name: 'Test Camera',
+    description: 'Test camera description',
+    ipAddress: '192.168.1.100',
+    port: 80,
+    username: 'admin',
+    password: 'password',
+    protocol: 'ONVIF',
+    manufacturer: 'Axis',
+    model: 'P1375',
+    firmwareVersion: '10.12.0',
+    buildingId: randomUUID(),
+    floorId: randomUUID(),
+    zoneId: randomUUID(),
+    position: { x: 100, y: 200, rotation: 0 },
+    capabilities: {
+      ptz: false,
+      audio: true,
+      nightVision: true,
+      motionDetection: true,
+      analytics: true
+    },
+    streamUrls: {
+      main: 'rtsp://192.168.1.100/stream1',
+      sub: 'rtsp://192.168.1.100/stream2',
+      mobile: 'rtsp://192.168.1.100/stream3'
+    },
+    recordingSettings: {
+      enabled: true,
+      quality: 'medium',
+      fps: 15,
+      resolution: '1920x1080',
+      retentionDays: 30,
+      motionRecording: true,
+      continuousRecording: false
+    },
+    privacyMasks: [],
+    status: 'online',
+    tenantId: randomUUID(),
+    ...overrides
+  }),
+
+  createMockRecording: (overrides: any = {}): any => ({
+    id: randomUUID(),
+    cameraId: randomUUID(),
+    tenantId: randomUUID(),
+    startTime: new Date(),
+    endTime: new Date(Date.now() + 60000),
+    duration: 60,
+    fileSize: 1024000,
+    status: 'completed',
+    triggerType: 'manual',
+    filePath: '/recordings/test.mp4',
+    ...overrides
+  }),
+
+  createMockStreamRequest: (overrides: Partial<StreamRequest> = {}): StreamRequest => ({
+    cameraId: randomUUID(),
+    quality: 'medium',
+    format: 'hls',
+    ...overrides
+  }),
+
+  createMockVideoExport: (overrides: Partial<VideoExport> = {}): VideoExport => ({
+    recordingIds: [randomUUID()],
+    format: 'mp4',
+    quality: 'high',
+    includeAudio: true,
+    watermark: true,
+    reason: 'Investigation',
+    requestedBy: randomUUID(),
+    ...overrides
+  }),
+
+  // Mock implementations for external dependencies
+  mockPrismaClient: {
+    camera: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      deleteMany: jest.fn(),
+      count: jest.fn(),
+      aggregate: jest.fn()
+    },
+    videoRecording: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn(),
+      aggregate: jest.fn()
+    },
+    videoExport: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+      update: jest.fn()
+    },
+    analyticsConfig: {
+      upsert: jest.fn()
+    },
+    videoCorrelation: {
+      create: jest.fn()
+    },
+    motionEvent: {
+      create: jest.fn()
+    },
+    lineCrossingEvent: {
+      create: jest.fn()
+    },
+    tamperEvent: {
+      create: jest.fn()
+    },
+    videoAccessLog: {
+      create: jest.fn()
+    },
+    auditLog: {
+      create: jest.fn()
+    },
+    analyticsEvent: {
+      findMany: jest.fn()
+    },
+    tenant: {
+      findMany: jest.fn()
+    },
+    $disconnect: jest.fn()
+  },
+
+  mockRedisClient: {
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+    exists: jest.fn(),
+    expire: jest.fn(),
+    disconnect: jest.fn()
+  },
+
+  mockFFmpegCommand: {
+    input: jest.fn().mockReturnThis(),
+    output: jest.fn().mockReturnThis(),
+    outputOptions: jest.fn().mockReturnThis(),
+    videoBitrate: jest.fn().mockReturnThis(),
+    size: jest.fn().mockReturnThis(),
+    duration: jest.fn().mockReturnThis(),
+    noAudio: jest.fn().mockReturnThis(),
+    complexFilter: jest.fn().mockReturnThis(),
+    screenshots: jest.fn().mockReturnThis(),
+    on: jest.fn().mockReturnThis(),
+    run: jest.fn(),
+    kill: jest.fn()
+  },
+
+  mockS3Client: {
+    send: jest.fn()
+  },
+
+  mockSocketIOServer: {
+    use: jest.fn(),
+    on: jest.fn(),
+    to: jest.fn().mockReturnThis(),
+    emit: jest.fn(),
+    join: jest.fn(),
+    leave: jest.fn()
+  },
+
+  // Test helper functions
+  setupTestEnvironment: () => {
+    process.env.NODE_ENV = 'test';
+    process.env.JWT_SECRET = 'test-secret';
+    process.env.REDIS_URL = 'redis://localhost:6379';
+    process.env.VIDEO_STORAGE_PATH = '/tmp/test-videos';
+    process.env.EXPORT_PATH = '/tmp/test-exports';
+    process.env.AUDIT_LOG_PATH = '/tmp/test-logs';
+  },
+
+  createTestJWT: (payload: any = {}) => {
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64');
+    const testPayload = {
+      userId: randomUUID(),
+      tenantId: randomUUID(),
+      role: 'admin',
+      ...payload
+    };
+    const payloadBase64 = Buffer.from(JSON.stringify(testPayload)).toString('base64');
+    const signature = 'test-signature';
+    return `${header}.${payloadBase64}.${signature}`;
+  },
+
+  mockFileSystem: {
+    readFile: jest.fn(),
+    writeFile: jest.fn(),
+    mkdir: jest.fn(),
+    rmdir: jest.fn(),
+    stat: jest.fn(),
+    rename: jest.fn(),
+    appendFile: jest.fn()
+  },
+
+  // Performance testing utilities
+  createLoadTestScenario: async (
+    endpoint: string,
+    requestCount: number,
+    concurrency: number,
+    requestFactory: () => any
+  ) => {
+    const results: any[] = [];
+    const batches = Math.ceil(requestCount / concurrency);
+    
+    for (let batch = 0; batch < batches; batch++) {
+      const batchPromises = [];
+      const batchSize = Math.min(concurrency, requestCount - batch * concurrency);
+      
+      for (let i = 0; i < batchSize; i++) {
+        const startTime = Date.now();
+        const promise = fetch(endpoint, requestFactory())
+          .then(response => ({
+            status: response.status,
+            responseTime: Date.now() - startTime,
+            success: response.ok
+          }))
+          .catch(error => ({
+            status: 0,
+            responseTime: Date.now() - startTime,
+            success: false,
+            error: error.message
+          }));
+        batchPromises.push(promise);
+      }
+      
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+    }
+    
+    return {
+      totalRequests: results.length,
+      successfulRequests: results.filter(r => r.success).length,
+      failedRequests: results.filter(r => !r.success).length,
+      averageResponseTime: results.reduce((sum, r) => sum + r.responseTime, 0) / results.length,
+      minResponseTime: Math.min(...results.map(r => r.responseTime)),
+      maxResponseTime: Math.max(...results.map(r => r.responseTime)),
+      throughput: results.length / (Math.max(...results.map(r => r.responseTime)) / 1000)
+    };
+  },
+
+  // Integration test helpers
+  setupIntegrationTest: async () => {
+    // Setup test database
+    const testPrisma = new PrismaClient({
+      datasources: {
+        db: {
+          url: process.env.TEST_DATABASE_URL || 'postgresql://test:test@localhost:5432/sparc_video_test'
+        }
+      }
+    });
+
+    // Setup test Redis
+    const testRedis = new Redis(process.env.TEST_REDIS_URL || 'redis://localhost:6380');
+
+    // Create test tenant and building
+    const testTenant = await testPrisma.tenant.create({
+      data: {
+        id: randomUUID(),
+        name: 'Test Tenant',
+        domain: 'test.sparc.com'
+      }
+    });
+
+    const testBuilding = await testPrisma.building.create({
+      data: {
+        id: randomUUID(),
+        name: 'Test Building',
+        tenantId: testTenant.id
+      }
+    });
+
+    return {
+      prisma: testPrisma,
+      redis: testRedis,
+      tenant: testTenant,
+      building: testBuilding,
+      cleanup: async () => {
+        await testPrisma.camera.deleteMany();
+        await testPrisma.videoRecording.deleteMany();
+        await testPrisma.building.deleteMany();
+        await testPrisma.tenant.deleteMany();
+        await testPrisma.$disconnect();
+        await testRedis.disconnect();
+      }
+    };
+  },
+
+  // Security test helpers
+  createSecurityTestSuite: () => ({
+    testUnauthorizedAccess: async (endpoint: string, method: string = 'GET') => {
+      const response = await fetch(endpoint, { method });
+      expect(response.status).toBe(401);
+    },
+
+    testInvalidToken: async (endpoint: string, method: string = 'GET') => {
+      const response = await fetch(endpoint, {
+        method,
+        headers: { Authorization: 'Bearer invalid-token' }
+      });
+      expect(response.status).toBe(401);
+    },
+
+    testCrossTenantAccess: async (endpoint: string, tenantId: string, otherTenantId: string) => {
+      const token = testUtils.createTestJWT({ tenantId: otherTenantId });
+      const response = await fetch(endpoint.replace(':tenantId', tenantId), {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      expect(response.status).toBeOneOf([403, 404]);
+    },
+
+    testSQLInjection: async (endpoint: string, token: string) => {
+      const maliciousPayloads = [
+        "'; DROP TABLE cameras; --",
+        "1' OR '1'='1",
+        "1; DELETE FROM cameras WHERE 1=1; --"
+      ];
+
+      for (const payload of maliciousPayloads) {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ name: payload })
+        });
+        // Should not cause server error or expose database structure
+        expect(response.status).not.toBe(500);
+      }
+    }
+  })
+};
+
+// Export test configuration for Jest
+export const jestConfig = {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+  roots: ['<rootDir>/src', '<rootDir>/tests'],
+  testMatch: [
+    '**/__tests__/**/*.ts',
+    '**/?(*.)+(spec|test).ts'
+  ],
+  transform: {
+    '^.+\\.ts$': 'ts-jest'
+  },
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/**/*.test.ts',
+    '!src/**/*.spec.ts'
+  ],
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text', 'lcov', 'html'],
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80
+    }
+  },
+  setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
+  testTimeout: 30000,
+  maxWorkers: 4,
+  verbose: true
+};
+
+// Test suites that would be implemented in separate test files
+export const testSuites = {
+  // Unit Tests
+  cameraManagementTests: {
+    'should create camera with valid data': async () => {
+      const mockCamera = testUtils.createMockCamera();
+      testUtils.mockPrismaClient.camera.create.mockResolvedValue(mockCamera);
+      
+      const response = await fetch('/cameras', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(mockCamera)
+      });
+      
+      expect(response.status).toBe(201);
+      expect(testUtils.mockPrismaClient.camera.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          name: mockCamera.name,
+          ipAddress: mockCamera.ipAddress
+        })
+      });
+    },
+
+    'should validate camera IP address format': async () => {
+      const invalidCamera = testUtils.createMockCamera({ ipAddress: 'invalid-ip' });
+      
+      const response = await fetch('/cameras', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(invalidCamera)
+      });
+      
+      expect(response.status).toBe(400);
+    },
+
+    'should update camera configuration': async () => {
+      const cameraId = randomUUID();
+      const updates = { name: 'Updated Camera' };
+      const updatedCamera = testUtils.createMockCamera({ id: cameraId, ...updates });
+      
+      testUtils.mockPrismaClient.camera.findFirst.mockResolvedValue(updatedCamera);
+      testUtils.mockPrismaClient.camera.update.mockResolvedValue(updatedCamera);
+      
+      const response = await fetch(`/cameras/${cameraId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updates)
+      });
+      
+      expect(response.status).toBe(200);
+      expect(testUtils.mockPrismaClient.camera.update).toHaveBeenCalled();
+    },
+
+    'should delete camera': async () => {
+      const cameraId = randomUUID();
+      const tenantId = randomUUID();
+      
+      testUtils.mockPrismaClient.camera.deleteMany.mockResolvedValue({ count: 1 });
+      
+      const response = await fetch(`/cameras/${cameraId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT({ tenantId })}`
+        }
+      });
+      
+      expect(response.status).toBe(200);
+      expect(testUtils.mockPrismaClient.camera.deleteMany).toHaveBeenCalledWith({
+        where: { id: cameraId, tenantId }
+      });
+    },
+
+    'should discover ONVIF cameras': async () => {
+      const mockDiscoveredCameras = [
+        testUtils.createMockCamera({ name: 'Discovered Camera 1' }),
+        testUtils.createMockCamera({ name: 'Discovered Camera 2' })
+      ];
+      
+      // Mock ONVIF discovery
+      jest.spyOn(VideoManagementService.prototype, 'discoverCameras')
+        .mockResolvedValue(mockDiscoveredCameras);
+      
+      const response = await fetch('/cameras/discover', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ networkRange: '192.168.1.0/24' })
+      });
+      
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result).toHaveLength(2);
+    }
+  },
+
+  streamingTests: {
+    'should start live stream': async () => {
+      const streamRequest = testUtils.createMockStreamRequest();
+      const mockCamera = testUtils.createMockCamera({ 
+        id: streamRequest.cameraId,
+        status: 'online'
+      });
+      
+      testUtils.mockPrismaClient.camera.findFirst.mockResolvedValue(mockCamera);
+      testUtils.mockFileSystem.mkdir.mockResolvedValue(undefined);
+      
+      const response = await fetch('/stream/start', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(streamRequest)
+      });
+      
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result.streamUrl).toContain('/api/video/stream/');
+    },
+
+    'should reject stream for offline camera': async () => {
+      const streamRequest = testUtils.createMockStreamRequest();
+      const mockCamera = testUtils.createMockCamera({ 
+        id: streamRequest.cameraId,
+        status: 'offline'
+      });
+      
+      testUtils.mockPrismaClient.camera.findFirst.mockResolvedValue(mockCamera);
+      
+      const response = await fetch('/stream/start', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(streamRequest)
+      });
+      
+      expect(response.status).toBe(400);
+    },
+
+    'should stop live stream': async () => {
+      const sessionId = randomUUID();
+      
+      const response = await fetch(`/stream/stop/${sessionId}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`
+        }
+      });
+      
+      expect(response.status).toBe(200);
+    },
+
+    'should serve HLS playlist': async () => {
+      const sessionId = randomUUID();
+      const playlistContent = '#EXTM3U\n#EXT-X-VERSION:3\n';
+      
+      testUtils.mockFileSystem.readFile.mockResolvedValue(Buffer.from(playlistContent));
+      
+      const response = await fetch(`/stream/${sessionId}/playlist.m3u8`, {
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`
+        }
+      });
+      
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('application/vnd.apple.mpegurl');
+    },
+
+    'should handle concurrent streaming sessions': async () => {
+      const concurrentStreams = 10;
+      const streamRequests = Array.from({ length: concurrentStreams }, () => 
+        testUtils.createMockStreamRequest()
+      );
+      
+      // Mock camera responses
+      streamRequests.forEach(request => {
+        testUtils.mockPrismaClient.camera.findFirst.mockResolvedValueOnce(
+          testUtils.createMockCamera({ id: request.cameraId, status: 'online' })
+        );
+      });
+      
+      const promises = streamRequests.map(request =>
+        fetch('/stream/start', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(request)
+        })
+      );
+      
+      const responses = await Promise.all(promises);
+      const successfulStreams = responses.filter(r => r.status === 200);
+      
+      expect(successfulStreams.length).toBe(concurrentStreams);
+    }
+  },
+
+  recordingTests: {
+    'should start recording': async () => {
+      const cameraId = randomUUID();
+      const tenantId = randomUUID();
+      const mockCamera = testUtils.createMockCamera({ id: cameraId, status: 'online' });
+      const mockRecording = testUtils.createMockRecording({ cameraId, tenantId });
+      
+      testUtils.mockPrismaClient.camera.findFirst.mockResolvedValue(mockCamera);
+      testUtils.mockPrismaClient.videoRecording.create.mockResolvedValue(mockRecording);
+      
+      const response = await fetch('/recordings/start', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT({ tenantId })}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ cameraId, duration: 60 })
+      });
+      
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result.recordingId).toBeDefined();
+    },
+
+    'should stop recording': async () => {
+      const recordingId = randomUUID();
+      const mockRecording = testUtils.createMockRecording({ id: recordingId });
+      
+      testUtils.mockPrismaClient.videoRecording.findUnique.mockResolvedValue(mockRecording);
+      testUtils.mockPrismaClient.videoRecording.update.mockResolvedValue({
+        ...mockRecording,
+        status: 'stopped'
+      });
+      
+      const response = await fetch(`/recordings/stop/${recordingId}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`
+        }
+      });
+      
+      expect(response.status).toBe(200);
+    },
+
+    'should search recordings with filters': async () => {
+      const tenantId = randomUUID();
+      const mockRecordings = [
+        testUtils.createMockRecording({ tenantId }),
+        testUtils.createMockRecording({ tenantId })
+      ];
+      
+      testUtils.mockPrismaClient.videoRecording.findMany.mockResolvedValue(mockRecordings);
+      testUtils.mockPrismaClient.videoRecording.count.mockResolvedValue(2);
+      
+      const searchParams = new URLSearchParams({
+        startTime: new Date(Date.now() - 86400000).toISOString(),
+        endTime: new Date().toISOString(),
+        page: '1',
+        limit: '20'
+      });
+      
+      const response = await fetch(`/recordings?${searchParams}`, {
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT({ tenantId })}`
+        }
+      });
+      
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result.recordings).toHaveLength(2);
+      expect(result.pagination).toBeDefined();
+    },
+
+    'should handle recording errors gracefully': async () => {
+      const cameraId = randomUUID();
+      const mockCamera = testUtils.createMockCamera({ id: cameraId, status: 'online' });
+      
+      testUtils.mockPrismaClient.camera.findFirst.mockResolvedValue(mockCamera);
+      testUtils.mockPrismaClient.videoRecording.create.mockRejectedValue(
+        new Error('Storage full')
+      );
+      
+      const response = await fetch('/recordings/start', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ cameraId })
+      });
+      
+      expect(response.status).toBe(500);
+    }
+  },
+
+  videoExportTests: {
+    'should create video export': async () => {
+      const exportRequest = testUtils.createMockVideoExport();
+      const exportId = randomUUID();
+      
+      testUtils.mockPrismaClient.videoExport.create.mockResolvedValue({
+        id: exportId,
+        ...exportRequest,
+        status: 'processing'
+      });
+      
+      const response = await fetch('/export', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(exportRequest)
+      });
+      
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result.exportId).toBe(exportId);
+    },
+
+    'should get export status': async () => {
+      const exportId = randomUUID();
+      const tenantId = randomUUID();
+      const mockExport = {
+        id: exportId,
+        tenantId,
+        status: 'completed',
+        filePath: '/exports/test.mp4'
+      };
+      
+      testUtils.mockPrismaClient.videoExport.findFirst.mockResolvedValue(mockExport);
+      
+      const response = await fetch(`/export/${exportId}`, {
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT({ tenantId })}`
+        }
+      });
+      
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result.status).toBe('completed');
+    },
+
+    'should download completed export': async () => {
+      const exportId = randomUUID();
+      const tenantId = randomUUID();
+      const mockExport = {
+        id: exportId,
+        tenantId,
+        status: 'completed',
+        filePath: '/exports/test.mp4',
+        format: 'mp4'
+      };
+      const mockFileContent = Buffer.from('mock video content');
+      
+      testUtils.mockPrismaClient.videoExport.findFirst.mockResolvedValue(mockExport);
+      testUtils.mockFileSystem.readFile.mockResolvedValue(mockFileContent);
+      
+      const response = await fetch(`/export/${exportId}/download`, {
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT({ tenantId })}`
+        }
+      });
+      
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('application/octet-stream');
+    },
+
+    'should add watermark to export': async () => {
+      const exportRequest = testUtils.createMockVideoExport({ watermark: true });
+      
+      // Mock FFmpeg watermark process
+      testUtils.mockFFmpegCommand.complexFilter.mockReturnValue(testUtils.mockFFmpegCommand);
+      testUtils.mockFFmpegCommand.on.mockImplementation((event, callback) => {
+        if (event === 'end') {
+          setTimeout(callback, 100);
+        }
+        return testUtils.mockFFmpegCommand;
+      });
+      
+      const response = await fetch('/export', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(exportRequest)
+      });
+      
+      expect(response.status).toBe(200);
+    }
+  },
+
+  analyticsTests: {
+    'should configure camera analytics': async () => {
+      const cameraId = randomUUID();
+      const tenantId = randomUUID();
+      const analyticsConfig = {
+        cameraId,
+        motionDetection: {
+          enabled: true,
+          sensitivity: 75,
+          zones: [
+            {
+              name: 'entrance',
+              coordinates: [
+                { x: 0.1, y: 0.1 },
+                { x: 0.9, y: 0.1 },
+                { x: 0.9, y: 0.9 },
+                { x: 0.1, y: 0.9 }
+              ]
+            }
+          ]
+        }
+      };
+      
+      testUtils.mockPrismaClient.camera.findFirst.mockResolvedValue(
+        testUtils.createMockCamera({ id: cameraId, tenantId })
+      );
+      testUtils.mockPrismaClient.analyticsConfig.upsert.mockResolvedValue(analyticsConfig);
+      
+      const response = await fetch('/analytics/configure', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT({ tenantId })}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(analyticsConfig)
+      });
+      
+      expect(response.status).toBe(200);
+    },
+
+    'should retrieve analytics events': async () => {
+      const tenantId = randomUUID();
+      const mockEvents = [
+        {
+          id: randomUUID(),
+          tenantId,
+          cameraId: randomUUID(),
+          type: 'motion_detected',
+          timestamp: new Date(),
+          confidence: 85,
+          camera: { name: 'Test Camera' }
+        }
+      ];
+      
+      testUtils.mockPrismaClient.analyticsEvent.findMany.mockResolvedValue(mockEvents);
+      
+      const response = await fetch('/analytics/events?eventType=motion_detected', {
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT({ tenantId })}`
+        }
+      });
+      
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result).toHaveLength(1);
+      expect(result[0].type).toBe('motion_detected');
+    },
+
+    'should handle motion detection events': async () => {
+      const cameraId = randomUUID();
+      const motionEvent = {
+        cameraId,
+        timestamp: new Date(),
+        confidence: 90,
+        zones: ['entrance']
+      };
+      
+      testUtils.mockPrismaClient.motionEvent.create.mockResolvedValue(motionEvent);
+      
+      // Simulate motion detection
+      const videoService = new VideoManagementService();
+      await videoService['handleMotionDetection'](motionEvent);
+      
+      expect(testUtils.mockPrismaClient.motionEvent.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          cameraId,
+          confidence: 90
+        })
+      });
+    }
+  },
+
+  privacyTests: {
+    'should update privacy masks': async () => {
+      const cameraId = randomUUID();
+      const tenantId = randomUUID();
+      const privacyMasks = [
+        {
+          id: randomUUID(),
+          name: 'Sensitive Area',
+          coordinates: [
+            { x: 0.2, y: 0.2 },
+            { x: 0.8, y: 0.2 },
+            { x: 0.8, y: 0.8 },
+            { x: 0.2, y: 0.8 }
+          ],
+          enabled: true
+        }
+      ];
+      
+      testUtils.mockPrismaClient.camera.findFirst.mockResolvedValue(
+        testUtils.createMockCamera({ id: cameraId, tenantId })
+      );
+      testUtils.mockPrismaClient.camera.update.mockResolvedValue({
+        ...testUtils.createMockCamera({ id: cameraId }),
+        privacyMasks
+      });
+      testUtils.mockPrismaClient.auditLog.create.mockResolvedValue({});
+      
+      const response = await fetch(`/cameras/${cameraId}/privacy-masks`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT({ tenantId })}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ masks: privacyMasks })
+      });
+      
+      expect(response.status).toBe(200);
+      expect(testUtils.mockPrismaClient.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'privacy_mask_updated',
+          resourceType: 'camera',
+          resourceId: cameraId
+        })
+      });
+    },
+
+    'should apply retention policies': async () => {
+      const tenantId = randomUUID();
+      const oldRecordings = [
+        testUtils.createMockRecording({ 
+          tenantId,
+          startTime: new Date(Date.now() - 35 * 24 * 60 * 60 * 1000) // 35 days old
+        })
+      ];
+      
+      testUtils.mockPrismaClient.videoRecording.findMany.mockResolvedValue(oldRecordings);
+      testUtils.mockPrismaClient.videoRecording.update.mockResolvedValue({});
+      
+      const videoService = new VideoManagementService();
+      await videoService['applyRetentionPolicy'](oldRecordings[0].id);
+      
+      expect(testUtils.mockPrismaClient.videoRecording.update).toHaveBeenCalledWith({
+        where: { id: oldRecordings[0].id },
+        data: expect.objectContaining({
+          scheduledDeletionDate: expect.any(Date)
+        })
+      });
+    }
+  },
+
+  integrationTests: {
+    'should handle access control event correlation': async () => {
+      const accessEvent = {
+        id: randomUUID(),
+        tenantId: randomUUID(),
+        buildingId: randomUUID(),
+        floorId: randomUUID(),
+        zoneId: randomUUID()
+      };
+      
+      const mockCameras = [
+        testUtils.createMockCamera({ 
+          buildingId: accessEvent.buildingId,
+          status: 'online'
+        }),
+        testUtils.createMockCamera({ 
+          floorId: accessEvent.floorId,
+          status: 'online'
+        })
+      ];
+      
+      testUtils.mockPrismaClient.camera.findMany.mockResolvedValue(mockCameras);
+      testUtils.mockPrismaClient.videoRecording.create.mockResolvedValue({});
+      testUtils.mockPrismaClient.videoCorrelation.create.mockResolvedValue({});
+      
+      const videoService = new VideoManagementService();
+      await videoService['handleAccessEvent'](accessEvent);
+      
+      expect(testUtils.mockPrismaClient.videoCorrelation.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          accessEventId: accessEvent.id,
+          cameraIds: expect.arrayContaining([mockCameras[0].id, mockCameras[1].id])
+        })
+      });
+    },
+
+    'should handle camera offline events': async () => {
+      const cameraId = randomUUID();
+      const offlineEvent = { cameraId };
+      
+      testUtils.mockPrismaClient.camera.update.mockResolvedValue({});
+      
+      const videoService = new VideoManagementService();
+      await videoService['handleCameraOffline'](offlineEvent);
+      
+      expect(testUtils.mockPrismaClient.camera.update).toHaveBeenCalledWith({
+        where: { id: cameraId },
+        data: { status: 'offline' }
+      });
+    }
+  },
+
+  performanceTests: {
+    'should handle high concurrent camera discovery': async () => {
+      const concurrentRequests = 50;
+      const networkRange = '192.168.1.0/24';
+      
+      const results = await testUtils.createLoadTestScenario(
+        '/cameras/discover',
+        concurrentRequests,
+        10,
+        () => ({
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ networkRange })
+        })
+      );
+      
+      expect(results.successfulRequests).toBeGreaterThan(concurrentRequests * 0.9);
+      expect(results.averageResponseTime).toBeLessThan(5000);
+    },
+
+    'should handle multiple simultaneous video exports': async () => {
+      const concurrentExports = 20;
+      
+      const results = await testUtils.createLoadTestScenario(
+        '/export',
+        concurrentExports,
+        5,
+        () => ({
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(testUtils.createMockVideoExport())
+        })
+      );
+      
+      expect(results.successfulRequests).toBeGreaterThan(concurrentExports * 0.8);
+      expect(results.averageResponseTime).toBeLessThan(10000);
+    },
+
+    'should maintain performance under high recording load': async () => {
+      const concurrentRecordings = 100;
+      
+      const results = await testUtils.createLoadTestScenario(
+        '/recordings/start',
+        concurrentRecordings,
+        20,
+        () => ({
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            cameraId: randomUUID(),
+            duration: 30
+          })
+        })
+      );
+      
+      expect(results.successfulRequests).toBeGreaterThan(concurrentRecordings * 0.85);
+      expect(results.averageResponseTime).toBeLessThan(3000);
+    }
+  },
+
+  securityTests: {
+    'should prevent unauthorized access to all endpoints': async () => {
+      const endpoints = [
+        { path: '/cameras', method: 'GET' },
+        { path: '/cameras', method: 'POST' },
+        { path: '/stream/start', method: 'POST' },
+        { path: '/recordings/start', method: 'POST' },
+        { path: '/export', method: 'POST' },
+        { path: '/analytics/configure', method: 'POST' }
+      ];
+      
+      const securityTests = testUtils.createSecurityTestSuite();
+      
+      for (const endpoint of endpoints) {
+        await securityTests.testUnauthorizedAccess(endpoint.path, endpoint.method);
+        await securityTests.testInvalidToken(endpoint.path, endpoint.method);
+      }
+    },
+
+    'should prevent cross-tenant data access': async () => {
+      const tenantId = randomUUID();
+      const otherTenantId = randomUUID();
+      const cameraId = randomUUID();
+      
+      const securityTests = testUtils.createSecurityTestSuite();
+      await securityTests.testCrossTenantAccess(
+        `/cameras/${cameraId}`,
+        tenantId,
+        otherTenantId
+      );
+    },
+
+    'should sanitize input to prevent injection attacks': async () => {
+      const token = testUtils.createTestJWT();
+      const securityTests = testUtils.createSecurityTestSuite();
+      
+      await securityTests.testSQLInjection('/cameras', token);
+    },
+
+    'should validate file upload security': async () => {
+      // Test for malicious file uploads in video export
+      const maliciousExport = testUtils.createMockVideoExport({
+        recordingIds: ["../../../etc/passwd"]
+      });
+      
+      const response = await fetch('/export', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${testUtils.createTestJWT()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(maliciousExport)
+      });
+      
+      // Should validate UUID format
+      expect(response.status).toBe(400);
+    }
+  }
+};
+
+// Test configuration and setup
+if (process.env.NODE_ENV === 'test') {
+  testUtils.setupTestEnvironment();
+}
+
+// Types and schemas
+const CameraSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().min(1).max(255),
+  description: z.string().optional(),
+  ipAddress: z.string().ip(),
+  port: z.number().int().min(1).max(65535).default(80),
+  username: z.string().min(1),
+  password: z.string().min(1),
+  protocol: z.enum(['ONVIF', 'RTSP', 'HTTP', 'HTTPS']).default('ONVIF'),
+  manufacturer: z.string().optional(),
+  model: z.string().optional(),
+  firmwareVersion: z.string().optional(),
+  buildingId: z.string().uuid(),
+  floorId: z.string().uuid().optional(),
+  zoneId: z.string().uuid().optional(),
+  position: z.object({
+    x: z.number(),
+    y: z.number(),
+    rotation: z.number().default(0)
+  }).optional(),
+  capabilities: z.object({
+    ptz: z.boolean().default(false),
+    audio: z.boolean().default(false),
+    nightVision: z.boolean().default(false),
+    motionDetection: z.boolean().default(false),
+    analytics: z.boolean().default(false)
+  }).default({}),
+  streamUrls: z.object({
+    main: z.string().url().optional(),
+    sub: z.string().url().optional(),
+    mobile: z.string().url().optional()
+  }).default({}),
+  recordingSettings: z.object({
+    enabled: z.boolean().default(true),
+    quality: z.enum(['high', 'medium', 'low']).default('medium'),
+    fps: z.number().int().min(1).max(60).default(15),
+    resolution: z.string().default('1920x1080'),
+    retentionDays: z.number().int().min(1).max(365).default(30),
+    motionRecording: z.boolean().default(true),
+    continuousRecording: z.boolean().default(false)
+  }).default({}),
+  privacyMasks: z.array(z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    coordinates: z.array(z.object({
+      x: z.number(),
+      y: z.number()
+    })),
+    enabled: z.boolean().default(true)
+  })).default([]),
+  status: z.enum(['online', 'offline', 'error', 'maintenance']).default('offline'),
+  tenantId: z.string().uuid()
+});
+
+const StreamRequestSchema = z.object({
+  cameraId: z.string().uuid(),
+  quality: z.enum(['high', 'medium', 'low']).default('medium'),
+  format: z.enum(['hls', 'webrtc', 'mjpeg']).default('hls')
+});
+
+const RecordingSearchSchema = z.object({
+  cameraIds: z.array(z.string().uuid()).optional(),
+  startTime: z.string().datetime(),
+  endTime: z.string().datetime(),
+  eventTypes: z.array(z.string()).optional(),
+  buildingId: z.string().uuid().optional(),
+  floorId: z.string().uuid().optional(),
+  page: z.number().int().min(1).default(1),
+  limit: z.number().int().min(1).max(100).default(20)
+});
+
+const VideoExportSchema = z.object({
+  recordingIds: z.array(z.string().uuid()),
+  format: z.enum(['mp4', 'avi', 'mov']).default('mp4'),
+  quality: z.enum(['original', 'high', 'medium', 'low']).default('high'),
+  includeAudio: z.boolean().default(true),
+  watermark: z.boolean().default(true),
+  reason: z.string().min(1).max(500),
+  requestedBy: z.string().uuid()
+});
+
+const AnalyticsConfigSchema = z.object({
+  cameraId: z.string().uuid(),
+  motionDetection: z.object({
+    enabled: z.boolean().default(true),
+    sensitivity: z.number().min(0).max(100).default(50),
+    zones: z.array(z.object({
+      name: z.string(),
+      coordinates: z.array(z.object({ x: z.number(), y: z.number() }))
+    })).default([])
+  }).default({}),
+  lineDetection: z.object({
+    enabled: z.boolean().default(false),
+    lines: z.array(z.object({
+      name: z.string(),
+      start: z.object({ x: z.number(), y: z.number() }),
+      end: z.object({ x: z.number(), y: z.number() }),
+      direction: z.enum(['both', 'enter', 'exit']).default('both')
+    }))
+  }).default({ enabled: false, lines: [] }),
+  tamperDetection: z.object({
+    enabled: z.boolean().default(true),
+    sensitivity: z.number().min(0).max(100).default(75)
+  }).default({})
+});
+
+type Camera = z.infer<typeof CameraSchema>;
+type StreamRequest = z.infer<typeof StreamRequestSchema>;
+type RecordingSearch = z.infer<typeof RecordingSearchSchema>;
+type VideoExport = z.infer<typeof VideoExportSchema>;
+type AnalyticsConfig = z.infer<typeof AnalyticsConfigSchema>;
+
+// Initialize services
+const app = new Hono();
+const prisma = new PrismaClient();
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+const eventEmitter = new EventEmitter();
+
+// Video Management Service Class
+class VideoManagementService {
+  private streamingSessions = new Map<string, any>();
+  private recordingJobs = new Map<string, any>();
+  private analyticsProcessors = new Map<string, any>();
+  private onvifClients = new Map<string, any>();
+
+  constructor() {
+    this.initializeEventHandlers();
+  }
+
+  // Expose private methods for testing
+  public getStreamingSessions() {
+    return this.streamingSessions;
+  }
+
+  public getRecordingJobs() {
+    return this.recordingJobs;
+  }
+
+  public getAnalyticsProcessors() {
+    return this.analyticsProcessors;
+  }
+
+  // Test helper methods
+  public async testCameraConnection(ipAddress: string, port: number): Promise<boolean> {
+    try {
+      const response = await fetch(`http://${ipAddress}:${port}`, {
+        method: 'HEAD',
+        timeout: 5000
+      });
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  public async validateCameraCredentials(
+    ipAddress: string, 
+    port: number, 
+    username: string, 
+    password: string
+  ): Promise<boolean> {
+    try {
+      // Simulate ONVIF authentication test
+      const authHeader = Buffer.from(`${username}:${password}`).toString('base64');
+      const response = await fetch(`http://${ipAddress}:${port}/onvif/device_service`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${authHeader}`,
+          'Content-Type': 'application/soap+xml'
+        },
+        body: '<?xml version="1.0" encoding="UTF-8"?><soap:Envelope>...</soap:Envelope>',
+        timeout: 5000
+      });
+      return response.status !== 401;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  public async getSystemMetrics(): Promise<{
+    activeSessions: number;
+    activeRecordings: number;
+    analyticsProcessors: number;
+    memoryUsage: NodeJS.MemoryUsage;
+    uptime: number;
+  }> {
+    return {
+      activeSessions: this.streamingSessions.size,
+      activeRecordings: this.recordingJobs.size,
+      analyticsProcessors: this.analyticsProcessors.size,
+      memoryUsage: process.memoryUsage(),
+      uptime: process.uptime()
+    };
+  }
+
+  // Enhanced error handling for testing
+  public async handleServiceError(error: Error, context: string): Promise<void> {
+    console.error(`Video service error in ${context}:`, error);
+    
+    // Emit error event for monitoring
+    eventEmitter.emit('service-error', {
+      context,
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date()
+    });
+
+    // Implement circuit breaker pattern for external services
+    if (error.message.includes('ONVIF') || error.message.includes('FFmpeg')) {
+      await this.handleExternalServiceFailure(context, error);
+    }
+  }
+
+  private async handleExternalServiceFailure(service: string, error: Error): Promise<void> {
+    // Implement exponential backoff and circuit breaker logic
+    const failureKey = `failure:${service}`;
+    const currentFailures = await redis.get(failureKey) || '0';
+    const failures = parseInt(currentFailures) + 1;
+    
+    await redis.setex(failureKey, 300, failures.toString()); // 5 minute window
+    
+    if (failures > 5) {
+      console.warn(`Circuit breaker activated for ${service} after ${failures} failures`);
+      eventEmitter.emit('circuit-breaker-open', { service, failures });
+    }
+  }
+
+  private initializeEventHandlers() {
+    // Handle access control events for video correlation
+    eventEmitter.on('access-event', this.handleAccessEvent.bind(this));
+    eventEmitter.on('camera-offline', this.handleCameraOffline.bind(this));
+    eventEmitter.on('motion-detected', this.handleMotionDetection.bind(this));
+    eventEmitter.on('analytics-alert', this.handleAnalyticsAlert.bind(this));
+  }
+
+  // Camera Management
+  async discoverCameras(tenantId: string, networkRange?: string): Promise<Camera[]> {
+    const discoveredCameras: Camera[] = [];
+    
+    try {
+      // ONVIF discovery using WS-Discovery
+      const onvifDevices = await this.performOnvifDiscovery(networkRange);
+      
+      for (const device of onvifDevices) {
+        const camera = await this.createCameraFromOnvifDevice(device, tenantId);
+        if (camera) {
+          discoveredCameras.push(camera);
+        }
+      }
+
+      // Network scanning for non-ONVIF cameras
+      const networkCameras = await this.performNetworkScan(networkRange);
+      discoveredCameras.push(...networkCameras);
+
+      return discoveredCameras;
+    } catch (error) {
+      console.error('Camera discovery failed:', error);
+      throw new HTTPException(500, { message: 'Camera discovery failed' });
+    }
+  }
+
+  private async performOnvifDiscovery(networkRange?: string): Promise<any[]> {
+    // Simulate ONVIF discovery - in real implementation, use onvif library
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve([
+          {
+            address: '192.168.1.100',
+            port: 80,
+            manufacturer: 'Axis',
+            model: 'P1375',
+            firmwareVersion: '10.12.0'
+          },
+          {
+            address: '192.168.1.101',
+            port: 80,
+            manufacturer: 'Hikvision',
+            model: 'DS-2CD2385G1-I',
+            firmwareVersion: '5.7.3'
+          }
+        ]);
+      }, 1000);
+    });
+  }
+
+  private async performNetworkScan(networkRange?: string): Promise<Camera[]> {
+    // Simulate network scanning for cameras
+    return [];
+  }
+
+  private async createCameraFromOnvifDevice(device: any, tenantId: string): Promise<Camera | null> {
+    try {
+      const camera: Partial<Camera> = {
+        id: randomUUID(),
+        name: `${device.manufacturer} ${device.model}`,
+        ipAddress: device.address,
+        port: device.port,
+        protocol: 'ONVIF',
+        manufacturer: device.manufacturer,
+        model: device.model,
+        firmwareVersion: device.firmwareVersion,
+        tenantId,
+        status: 'offline',
+        capabilities: {
+          ptz: false,
+          audio: false,
+          nightVision: true,
+          motionDetection: true,
+          analytics: true
+        }
+      };
+
+      return camera as Camera;
+    } catch (error) {
+      console.error('Failed to create camera from ONVIF device:', error);
+      return null;
+    }
+  }
+
+  async configureCamera(cameraId: string, config: Partial<Camera>): Promise<Camera> {
+    try {
+      const camera = await prisma.camera.findUnique({
+        where: { id: cameraId }
+      });
+
+      if (!camera) {
+        throw new HTTPException(404, { message: 'Camera not found' });
+      }
+
+      // Update camera configuration
+      const updatedCamera = await prisma.camera.update({
+        where: { id: cameraId },
+        data: config
+      });
+
+      // Apply configuration to physical camera via ONVIF
+      await this.applyOnvifConfiguration(cameraId, config);
+
+      // Update streaming URLs
+      await this.updateStreamUrls(cameraId);
+
+      return updatedCamera as Camera;
+    } catch (error) {
+      console.error('Camera configuration failed:', error);
+      throw new HTTPException(500, { message: 'Camera configuration failed' });
+    }
+  }
+
+  private async applyOnvifConfiguration(cameraId: string, config: Partial<Camera>): Promise<void> {
+    // Apply configuration to physical camera via ONVIF
+    // This would use the onvif library to configure the actual camera
+  }
+
+  private async updateStreamUrls(cameraId: string): Promise<void> {
+    const camera = await prisma.camera.findUnique({
+      where: { id: cameraId }
+    });
+
+    if (!camera) return;
+
+    const streamUrls = {
+      main: `rtsp://${camera.ipAddress}:${camera.port}/stream1`,
+      sub: `rtsp://${camera.ipAddress}:${camera.port}/stream2`,
+      mobile: `rtsp://${camera.ipAddress}:${camera.port}/stream3`
+    };
+
+    await prisma.camera.update({
+      where: { id: cameraId },
+      data: { streamUrls }
+    });
+  }
+
+  // Live Streaming
+  async startLiveStream(request: StreamRequest, tenantId: string): Promise<string> {
+    try {
+      const camera = await prisma.camera.findFirst({
+        where: {
+          id: request.cameraId,
+          tenantId
+        }
+      });
+
+      if (!camera) {
+        throw new HTTPException(404, { message: 'Camera not found' });
+      }
+
+      if (camera.status !== 'online') {
+        throw new HTTPException(400, { message: 'Camera is not online' });
+      }
+
+      const sessionId = randomUUID();
+      const streamUrl = await this.createHLSStream(camera, request.quality, sessionId);
+
+      // Store streaming session
+      this.streamingSessions.set(sessionId, {
+        cameraId: request.cameraId,
+        tenantId,
+        quality: request.quality,
+        format: request.format,
+        startTime: new Date(),
+        streamUrl
+      });
+
+      // Log streaming access
+      await this.logVideoAccess(tenantId, request.cameraId, 'live_stream', sessionId);
+
+      return streamUrl;
+    } catch (error) {
+      console.error('Failed to start live stream:', error);
+      throw new HTTPException(500, { message: 'Failed to start live stream' });
+    }
+  }
+
+  private async createHLSStream(camera: any, quality: string, sessionId: string): Promise<string> {
+    const outputDir = `/tmp/hls/${sessionId}`;
+    await fs.mkdir(outputDir, { recursive: true });
+
+    const rtspUrl = camera.streamUrls[quality === 'high' ? 'main' : 'sub'];
+    const playlistPath = path.join(outputDir, 'playlist.m3u8');
+
+    // Configure FFmpeg for HLS streaming
+    const ffmpegCommand = ffmpeg(rtspUrl)
+      .outputOptions([
+        '-f hls',
+        '-hls_time 2',
+        '-hls_list_size 3',
+        '-hls_flags delete_segments',
+        '-c:v libx264',
+        '-preset ultrafast',
+        '-tune zerolatency'
+      ])
+      .output(playlistPath);
+
+    // Quality-specific encoding settings
+    switch (quality) {
+      case 'high':
+        ffmpegCommand.videoBitrate('2000k').size('1920x1080');
+        break;
+      case 'medium':
+        ffmpegCommand.videoBitrate('1000k').size('1280x720');
+        break;
+      case 'low':
+        ffmpegCommand.videoBitrate('500k').size('640x480');
+        break;
+    }
+
+    ffmpegCommand.on('start', () => {
+      console.log(`Started HLS stream for camera ${camera.id}`);
+    });
+
+    ffmpegCommand.on('error', (err) => {
+      console.error(`HLS stream error for camera ${camera.id}:`, err);
+      this.streamingSessions.delete(sessionId);
+    });
+
+    ffmpegCommand.run();
+
+    return `/api/video/stream/${sessionId}/playlist.m3u8`;
+  }
+
+  async stopLiveStream(sessionId: string): Promise<void> {
+    const session = this.streamingSessions.get(sessionId);
+    if (session) {
+      // Stop FFmpeg process
+      if (session.ffmpegProcess) {
+        session.ffmpegProcess.kill();
+      }
+
+      // Clean up HLS files
+      const outputDir = `/tmp/hls/${sessionId}`;
+      try {
+        await fs.rmdir(outputDir, { recursive: true });
+      } catch (error) {
+        console.error('Failed to clean up HLS files:', error);
+      }
+
+      this.streamingSessions.delete(sessionId);
+
+      // Log stream end
+      await this.logVideoAccess(
+        session.tenantId,
+        session.cameraId,
+        'live_stream_end',
+        sessionId
+      );
+    }
+  }
+
+  // Recording Management
+  async startRecording(cameraId: string, tenantId: string, duration?: number): Promise<string> {
+    try {
+      const camera = await prisma.camera.findFirst({
+        where: {
+          id: cameraId,
+          tenantId
+        }
+      });
+
+      if (!camera) {
+        throw new HTTPException(404, { message: 'Camera not found' });
+      }
+
+      const recordingId = randomUUID();
+      const startTime = new Date();
+      const endTime = duration ? new Date(Date.now() + duration * 1000) : null;
+
+      // Create recording record
+      const recording = await prisma.videoRecording.create({
+        data: {
+          id: recordingId,
+          cameraId,
+          tenantId,
+          startTime,
+          endTime,
+          status: 'recording',
+          triggerType: 'manual',
+          fileSize: 0,
+          duration: 0
+        }
+      });
+
+      // Start FFmpeg recording
+      await this.startFFmpegRecording(camera, recordingId, duration);
+
+      return recordingId;
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+      throw new HTTPException(500, { message: 'Failed to start recording' });
+    }
+  }
+
+  private async startFFmpegRecording(camera: any, recordingId: string, duration?: number): Promise<void> {
+    const outputPath = `/recordings/${recordingId}.mp4`;
+    const rtspUrl = camera.streamUrls.main;
+
+    const ffmpegCommand = ffmpeg(rtspUrl)
+      .outputOptions([
+        '-c:v libx264',
+        '-preset medium',
+        '-crf 23',
+        '-c:a aac',
+        '-movflags +faststart'
+      ])
+      .output(outputPath);
+
+    if (duration) {
+      ffmpegCommand.duration(duration);
+    }
+
+    ffmpegCommand.on('start', () => {
+      console.log(`Started recording for camera ${camera.id}`);
+    });
+
+    ffmpegCommand.on('end', async () => {
+      console.log(`Recording completed for camera ${camera.id}`);
+      await this.finalizeRecording(recordingId, outputPath);
+    });
+
+    ffmpegCommand.on('error', async (err) => {
+      console.error(`Recording error for camera ${camera.id}:`, err);
+      await this.handleRecordingError(recordingId, err);
+    });
+
+    ffmpegCommand.run();
+
+    this.recordingJobs.set(recordingId, ffmpegCommand);
+  }
+
+  private async finalizeRecording(recordingId: string, filePath: string): Promise<void> {
+    try {
+      const stats = await fs.stat(filePath);
+      const fileSize = stats.size;
+
+      // Get video duration using FFprobe
+      const duration = await this.getVideoDuration(filePath);
+
+      // Update recording record
+      await prisma.videoRecording.update({
+        where: { id: recordingId },
+        data: {
+          status: 'completed',
+          endTime: new Date(),
+          fileSize,
+          duration,
+          filePath
+        }
+      });
+
+      // Generate thumbnail
+      await this.generateThumbnail(filePath, recordingId);
+
+      // Apply retention policy
+      await this.applyRetentionPolicy(recordingId);
+
+      this.recordingJobs.delete(recordingId);
+    } catch (error) {
+      console.error('Failed to finalize recording:', error);
+      await this.handleRecordingError(recordingId, error);
+    }
+  }
+
+  private async getVideoDuration(filePath: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(filePath, (err, metadata) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(metadata.format.duration || 0);
+        }
+      });
+    });
+  }
+
+  private async generateThumbnail(videoPath: string, recordingId: string): Promise<void> {
+    const thumbnailPath = `/thumbnails/${recordingId}.jpg`;
+
+    return new Promise((resolve, reject) => {
+      ffmpeg(videoPath)
+        .screenshots({
+          timestamps: ['50%'],
+          filename: `${recordingId}.jpg`,
+          folder: '/thumbnails',
+          size: '320x240'
+        })
+        .on('end', () => {
+          resolve();
+        })
+        .on('error', (err) => {
+          reject(err);
+        });
+    });
+  }
+
+  private async handleRecordingError(recordingId: string, error: any): Promise<void> {
+    await prisma.videoRecording.update({
+      where: { id: recordingId },
+      data: {
+        status: 'error',
+        endTime: new Date(),
+        errorMessage: error.message
+      }
+    });
+
+    this.recordingJobs.delete(recordingId);
+  }
+
+  // Video Analytics
+  async configureAnalytics(config: AnalyticsConfig, tenantId: string): Promise<void> {
+    try {
+      const camera = await prisma.camera.findFirst({
+        where: {
+          id: config.cameraId,
+          tenantId
+        }
+      });
+
+      if (!camera) {
+        throw new HTTPException(404, { message: 'Camera not found' });
+      }
+
+      // Store analytics configuration
+      await prisma.analyticsConfig.upsert({
+        where: { cameraId: config.cameraId },
+        update: config,
+        create: {
+          ...config,
+          tenantId
+        }
+      });
+
+      // Start analytics processor
+      await this.startAnalyticsProcessor(config.cameraId, config);
+
+    } catch (error) {
+      console.error('Failed to configure analytics:', error);
+      throw new HTTPException(500, { message: 'Failed to configure analytics' });
+    }
+  }
+
+  private async startAnalyticsProcessor(cameraId: string, config: AnalyticsConfig): Promise<void> {
+    // Stop existing processor if running
+    if (this.analyticsProcessors.has(cameraId)) {
+      this.analyticsProcessors.get(cameraId).stop();
+    }
+
+    const camera = await prisma.camera.findUnique({
+      where: { id: cameraId }
+    });
+
+    if (!camera) return;
+
+    // Create analytics processor (simplified implementation)
+    const processor = {
+      cameraId,
+      config,
+      isRunning: true,
+      stop: () => {
+        processor.isRunning = false;
+      }
+    };
+
+    this.analyticsProcessors.set(cameraId, processor);
+
+    // Start processing video stream for analytics
+    this.processVideoAnalytics(processor, camera);
+  }
+
+  private async processVideoAnalytics(processor: any, camera: any): Promise<void> {
+    // Simplified analytics processing
+    // In real implementation, this would use computer vision libraries
+    const interval = setInterval(async () => {
+      if (!processor.isRunning) {
+        clearInterval(interval);
+        return;
+      }
+
+      // Simulate motion detection
+      if (processor.config.motionDetection.enabled && Math.random() > 0.95) {
+        await this.handleMotionDetection({
+          cameraId: processor.cameraId,
+          timestamp: new Date(),
+          confidence: Math.random() * 100,
+          zones: ['zone1']
+        });
+      }
+
+      // Simulate line crossing detection
+      if (processor.config.lineDetection.enabled && Math.random() > 0.98) {
+        await this.handleLineCrossing({
+          cameraId: processor.cameraId,
+          timestamp: new Date(),
+          line: 'entrance',
+          direction: 'enter'
+        });
+      }
+
+      // Simulate tamper detection
+      if (processor.config.tamperDetection.enabled && Math.random() > 0.999) {
+        await this.handleTamperDetection({
+          cameraId: processor.cameraId,
+          timestamp: new Date(),
+          type: 'camera_moved'
+        });
+      }
+    }, 1000);
+  }
+
+  // Event Handlers
+  private async handleAccessEvent(event: any): Promise<void> {
+    try {
+      // Find cameras near the access point
+      const cameras = await prisma.camera.findMany({
+        where: {
+          tenantId: event.tenantId,
+          OR: [
+            { buildingId: event.buildingId },
+            { floorId: event.floorId },
+            { zoneId: event.zoneId }
+          ]
+        }
+      });
+
+      // Start recording on relevant cameras
+      for (const camera of cameras) {
+        if (camera.status === 'online') {
+          await this.startRecording(camera.id, event.tenantId, 60); // 60 second recording
+        }
+      }
+
+      // Create video correlation record
+      await prisma.videoCorrelation.create({
+        data: {
+          accessEventId: event.id,
+          cameraIds: cameras.map(c => c.id),
+          tenantId: event.tenantId,
+          timestamp: new Date()
+        }
+      });
+
+    } catch (error) {
+      console.error('Failed to handle access event:', error);
+    }
+  }
+
+  private async handleCameraOffline(event: any): Promise<void> {
+    // Update camera status
+    await prisma.camera.update({
+      where: { id: event.cameraId },
+      data: { status: 'offline' }
+    });
+
+    // Stop streaming sessions
+    for (const [sessionId, session] of this.streamingSessions) {
+      if (session.cameraId === event.cameraId) {
+        await this.stopLiveStream(sessionId);
+      }
+    }
+
+    // Generate alert
+    eventEmitter.emit('analytics-alert', {
+      type: 'camera_offline',
+      cameraId: event.cameraId,
+      timestamp: new Date(),
+      severity: 'high'
+    });
+  }
+
+  private async handleMotionDetection(event: any): Promise<void> {
+    // Log motion event
+    await prisma.motionEvent.create({
+      data: {
+        cameraId: event.cameraId,
+        timestamp: event.timestamp,
+        confidence: event.confidence,
+        zones: event.zones
+      }
+    });
+
+    // Trigger recording if not already recording
+    const activeRecording = await prisma.videoRecording.findFirst({
+      where: {
+        cameraId: event.cameraId,
+        status: 'recording'
+      }
+    });
+
+    if (!activeRecording) {
+      const camera = await prisma.camera.findUnique({
+        where: { id: event.cameraId }
+      });
+      
+      if (camera) {
+        await this.startRecording(event.cameraId, camera.tenantId, 30);
+      }
+    }
+
+    // Generate alert if configured
+    eventEmitter.emit('analytics-alert', {
+      type: 'motion_detected',
+      cameraId: event.cameraId,
+      timestamp: event.timestamp,
+      confidence: event.confidence,
+      severity: 'medium'
+    });
+  }
+
+  private async handleLineCrossing(event: any): Promise<void> {
+    // Log line crossing event
+    await prisma.lineCrossingEvent.create({
+      data: {
+        cameraId: event.cameraId,
+        timestamp: event.timestamp,
+        line: event.line,
+        direction: event.direction
+      }
+    });
+
+    // Generate alert
+    eventEmitter.emit('analytics-alert', {
+      type: 'line_crossing',
+      cameraId: event.cameraId,
+      timestamp: event.timestamp,
+      line: event.line,
+      direction: event.direction,
+      severity: 'medium'
+    });
+  }
+
+  private async handleTamperDetection(event: any): Promise<void> {
+    // Log tamper event
+    await prisma.tamperEvent.create({
+      data: {
+        cameraId: event.cameraId,
+        timestamp: event.timestamp,
+        type: event.type
+      }
+    });
+
+    // Generate high priority alert
+    eventEmitter.emit('analytics-alert', {
+      type: 'camera_tamper',
+      cameraId: event.cameraId,
+      timestamp: event.timestamp,
+      tamperType: event.type,
+      severity: 'critical'
+    });
+  }
+
+  // Privacy and Compliance
+  private async applyRetentionPolicy(recordingId: string): Promise<void> {
+    const recording = await prisma.videoRecording.findUnique({
+      where: { id: recordingId },
+      include: { camera: true }
+    });
+
+    if (!recording) return;
+
+    const retentionDays = recording.camera.recordingSettings?.retentionDays || 30;
+    const deleteDate = new Date();
+    deleteDate.setDate(deleteDate.getDate() + retentionDays);
+
+    await prisma.videoRecording.update({
+      where: { id: recordingId },
+      data: { scheduledDeletionDate: deleteDate }
+    });
+  }
+
+  private async logVideoAccess(tenantId: string, cameraId: string, action: string, sessionId?: string): Promise<void> {
+    await prisma.videoAccessLog.create({
+      data: {
+        tenantId,
+        cameraId,
+        action,
+        sessionId,
+        timestamp: new Date(),
+        ipAddress: '0.0.0.0', // Would be extracted from request
+        userAgent: 'video-management-service'
+      }
+    });
+  }
+
+  // Video Export
+  async exportVideo(request: VideoExport, tenantId: string): Promise<string> {
+    try {
+      const exportId = randomUUID();
+      
+      // Create export record
+      await prisma.videoExport.create({
+        data: {
+          id: exportId,
+          tenantId,
+          recordingIds: request.recordingIds,
+          format: request.format,
+          quality: request.quality,
+          includeAudio: request.includeAudio,
+          watermark: request.watermark,
+          reason: request.reason,
+          requestedBy: request.requestedBy,
+          status: 'processing',
+          createdAt: new Date()
+        }
+      });
+
+      // Start export process
+      this.processVideoExport(exportId, request, tenantId);
+
+      return exportId;
+    } catch (error) {
+      console.error('Failed to start video export:', error);
+      throw new HTTPException(500, { message: 'Failed to start video export' });
+    }
+  }
+
+  private async processVideoExport(exportId: string, request: VideoExport, tenantId: string): Promise<void> {
+    try {
+      const recordings = await prisma.videoRecording.findMany({
+        where: {
+          id: { in: request.recordingIds },
+          tenantId
+        }
+      });
+
+      if (recordings.length === 0) {
+        throw new Error('No recordings found');
+      }
+
+      const outputPath = `/exports/${exportId}.${request.format}`;
+      
+      // Concatenate videos using FFmpeg
+      const inputFiles = recordings.map(r => r.filePath).filter(Boolean);
+      
+      if (inputFiles.length === 1) {
+        // Single file export
+        await this.exportSingleVideo(inputFiles[0], outputPath, request);
+      } else {
+        // Multiple file concatenation
+        await this.concatenateVideos(inputFiles, outputPath, request);
+      }
+
+      // Add watermark if requested
+      if (request.watermark) {
+        await this.addWatermark(outputPath, exportId);
+      }
+
+      // Generate chain of custody document
+      await this.generateChainOfCustody(exportId, recordings, request);
+
+      // Update export status
+      const stats = await fs.stat(outputPath);
+      await prisma.videoExport.update({
+        where: { id: exportId },
+        data: {
+          status: 'completed',
+          filePath: outputPath,
+          fileSize: stats.size,
+          completedAt: new Date()
+        }
+      });
+
+    } catch (error) {
+      console.error('Video export failed:', error);
+      await prisma.videoExport.update({
+        where: { id: exportId },
+        data: {
+          status: 'failed',
+          errorMessage: error.message,
+          completedAt: new Date()
+        }
+      });
+    }
+  }
+
+  private async exportSingleVideo(inputPath: string, outputPath: string, request: VideoExport): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const command = ffmpeg(inputPath);
+
+      // Apply quality settings
+      switch (request.quality) {
+        case 'high':
+          command.videoBitrate('2000k');
+          break;
+        case 'medium':
+          command.videoBitrate('1000k');
+          break;
+        case 'low':
+          command.videoBitrate('500k');
+          break;
+      }
+
+      if (!request.includeAudio) {
+        command.noAudio();
+      }
+
+      command
+        .output(outputPath)
+        .on('end', resolve)
+        .on('error', reject)
+        .run();
+    });
+  }
+
+  private async concatenateVideos(inputFiles: string[], outputPath: string, request: VideoExport): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const command = ffmpeg();
+
+      inputFiles.forEach(file => {
+        command.input(file);
+      });
+
+      command
+        .complexFilter([
+          inputFiles.map((_, i) => `[${i}:v]`).join('') + `concat=n=${inputFiles.length}:v=1:a=${request.includeAudio ? 1 : 0}[outv]${request.includeAudio ? '[outa]' : ''}`
+        ])
+        .outputOptions(['-map', '[outv]'])
+        .output(outputPath);
+
+      if (request.includeAudio) {
+        command.outputOptions(['-map', '[outa]']);
+      }
+
+      command
+        .on('end', resolve)
+        .on('error', reject)
+        .run();
+    });
+  }
+
+  private async addWatermark(videoPath: string, exportId: string): Promise<void> {
+    const watermarkText = `SPARC Export ${exportId} - ${new Date().toISOString()}`;
+    const tempPath = `${videoPath}.temp`;
+
+    return new Promise((resolve, reject) => {
+      ffmpeg(videoPath)
+        .complexFilter([
+          `drawtext=text='${watermarkText}':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y=h-th-10`
+        ])
+        .output(tempPath)
+        .on('end', async () => {
+          await fs.rename(tempPath, videoPath);
+          resolve();
+        })
+        .on('error', reject)
+        .run();
+    });
+  }
+
+  private async generateChainOfCustody(exportId: string, recordings: any[], request: VideoExport): Promise<void> {
+    const chainOfCustody = {
+      exportId,
+      timestamp: new Date().toISOString(),
+      requestedBy: request.requestedBy,
+      reason: request.reason,
+      recordings: recordings.map(r => ({
+        id: r.id,
+        cameraId: r.cameraId,
+        startTime: r.startTime,
+        endTime: r.endTime,
+        fileSize: r.fileSize,
+        checksum: createHash('sha256').update(r.filePath || '').digest('hex')
+      })),
+      exportSettings: {
+        format: request.format,
+        quality: request.quality,
+        includeAudio: request.includeAudio,
+        watermark: request.watermark
+      }
+    };
+
+    const documentPath = `/exports/${exportId}_chain_of_custody.json`;
+    await fs.writeFile(documentPath, JSON.stringify(chainOfCustody, null, 2));
+
+    await prisma.videoExport.update({
+      where: { id: exportId },
+      data: { chainOfCustodyPath: documentPath }
+    });
+  }
+}
+
+// Initialize service
+const videoService = new VideoManagementService();
+
+// Middleware
+app.use('*', cors({
+  origin: process.env.CORS_ORIGIN || '*',
+  credentials: true
+}));
+
+app.use('*', logger());
+app.use('*', prettyJSON());
+
+// Authentication middleware
+app.use('*', async (c, next) => {
+  if (c.req.path === '/health') {
+    return next();
+  }
+
+  const token = c.req.header('Authorization')?.replace('Bearer ', '');
+  if (!token) {
+    throw new HTTPException(401, { message: 'Authentication required' });
+  }
+
+  try {
+    // Verify JWT token (simplified)
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+    c.set('user', payload);
+    c.set('tenantId', payload.tenantId);
+    await next();
+  } catch (error) {
+    throw new HTTPException(401, { message: 'Invalid token' });
+  }
+});
+
+// Routes
+
+// Health check
+app.get('/health', (c) => {
+  return c.json({
+    status: 'healthy',
+    service: 'video-management-service',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0'
+  });
+});
+
+// Camera management
+app.get('/cameras', async (c) => {
+  const tenantId = c.get('tenantId');
+  const buildingId = c.req.query('buildingId');
+  const floorId = c.req.query('floorId');
+
+  const cameras = await prisma.camera.findMany({
+    where: {
+      tenantId,
+      ...(buildingId && { buildingId }),
+      ...(floorId && { floorId })
+    },
+    include: {
+      building: true,
+      floor: true,
+      zone: true
+    }
+  });
+
+  return c.json(cameras);
+});
+
+app.post('/cameras', async (c) => {
+  const tenantId = c.get('tenantId');
+  const body = await c.req.json();
+  const cameraData = CameraSchema.parse({ ...body, tenantId });
+
+  const camera = await prisma.camera.create({
+    data: cameraData
+  });
+
+  return c.json(camera, 201);
+});
+
+app.get('/cameras/:id', async (c) => {
+  const tenantId = c.get('tenantId');
+  const cameraId = c.req.param('id');
+
+  const camera = await prisma.camera.findFirst({
+    where: {
+      id: cameraId,
+      tenantId
+    },
+    include: {
+      building: true,
+      floor: true,
+      zone: true,
+      recordings: {
+        orderBy: { startTime: 'desc' },
+        take: 10
+      }
+    }
+  });
+
+  if (!camera) {
+    throw new HTTPException(404, { message: 'Camera not found' });
+  }
+
+  return c.json(camera);
+});
+
+app.put('/cameras/:id', async (c) => {
+  const tenantId = c.get('tenantId');
+  const cameraId = c.req.param('id');
+  const body = await c.req.json();
+
+  const updatedCamera = await videoService.configureCamera(cameraId, body);
+  return c.json(updatedCamera);
+});
+
+app.delete('/cameras/:id', async (c) => {
+  const tenantId = c.get('tenantId');
+  const cameraId = c.req.param('id');
+
+  await prisma.camera.deleteMany({
+    where: {
+      id: cameraId,
+      tenantId
+    }
+  });
+
+  return c.json({ message: 'Camera deleted successfully' });
+});
+
+// Camera discovery
+app.post('/cameras/discover', async (c) => {
+  const tenantId = c.get('tenantId');
+  const { networkRange } = await c.req.json();
+
+  const discoveredCameras = await videoService.discoverCameras(tenantId, networkRange);
+  return c.json(discoveredCameras);
+});
+
+// Live streaming
+app.post('/stream/start', async (c) => {
+  const tenantId = c.get('tenantId');
+  const body = await c.req.json();
+  const streamRequest = StreamRequestSchema.parse(body);
+
+  const streamUrl = await videoService.startLiveStream(streamRequest, tenantId);
+  return c.json({ streamUrl });
+});
+
+app.post('/stream/stop/:sessionId', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  await videoService.stopLiveStream(sessionId);
+  return c.json({ message: 'Stream stopped successfully' });
+});
+
+// Serve HLS streams
+app.get('/stream/:sessionId/*', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const filePath = c.req.path.split(`/stream/${sessionId}/`)[1];
+  
+  try {
+    const fullPath = `/tmp/hls/${sessionId}/${filePath}`;
+    const content = await fs.readFile(fullPath);
+    
+    if (filePath.endsWith('.m3u8')) {
+      c.header('Content-Type', 'application/vnd.apple.mpegurl');
+    } else if (filePath.endsWith('.ts')) {
+      c.header('Content-Type', 'video/mp2t');
+    }
+    
+    return c.body(content);
+  } catch (error) {
+    throw new HTTPException(404, { message: 'Stream file not found' });
+  }
+});
+
+// Recording management
+app.post('/recordings/start', async (c) => {
+  const tenantId = c.get('tenantId');
+  const { cameraId, duration } = await c.req.json();
+
+  const recordingId = await videoService.startRecording(cameraId, tenantId, duration);
+  return c.json({ recordingId });
+});
+
+app.post('/recordings/stop/:id', async (c) => {
+  const recordingId = c.req.param('id');
+  
+  const recording = await prisma.videoRecording.findUnique({
+    where: { id: recordingId }
+  });
+
+  if (!recording) {
+    throw new HTTPException(404, { message: 'Recording not found' });
+  }
+
+  await prisma.videoRecording.update({
+    where: { id: recordingId },
+    data: {
+      status: 'stopped',
+      endTime: new Date()
+    }
+  });
+
+  return c.json({ message: 'Recording stopped successfully' });
+});
+
+app.get('/recordings', async (c) => {
+  const tenantId = c.get('tenantId');
+  const query = c.req.query();
+  const searchParams = RecordingSearchSchema.parse(query);
+
+  const recordings = await prisma.videoRecording.findMany({
+    where: {
+      tenantId,
+      ...(searchParams.cameraIds && { cameraId: { in: searchParams.cameraIds } }),
+      startTime: {
+        gte: new Date(searchParams.startTime),
+        lte: new Date(searchParams.endTime)
+      }
+    },
+    include: {
+      camera: {
+        select: {
+          name: true,
+          building: { select: { name: true } },
+          floor: { select: { name: true } }
+        }
+      }
+    },
+    orderBy: { startTime: 'desc' },
+    skip: (searchParams.page - 1) * searchParams.limit,
+    take: searchParams.limit
+  });
+
+  const total = await prisma.videoRecording.count({
+    where: {
+      tenantId,
+      ...(searchParams.cameraIds && { cameraId: { in: searchParams.cameraIds } }),
+      startTime: {
+        gte: new Date(searchParams.startTime),
+        lte: new Date(searchParams.endTime)
+      }
+    }
+  });
+
+  return c.json({
+    recordings,
+    pagination: {
+      page: searchParams.page,
+      limit: searchParams.limit,
+      total,
+      pages: Math.ceil(total / searchParams.limit)
+    }
+  });
+});
+
+app.get('/recordings/:id', async (c) => {
+  const tenantId = c.get('tenantId');
+  const recordingId = c.req.param('id');
+
+  const recording = await prisma.videoRecording.findFirst({
+    where: {
+      id: recordingId,
+      tenantId
+    },
+    include: {
+      camera: true
+    }
+  });
+
+  if (!recording) {
+    throw new HTTPException(404, { message: 'Recording not found' });
+  }
+
+  return c.json(recording);
+});
+
+// Video export
+app.post('/export', async (c) => {
+  const tenantId = c.get('tenantId');
+  const user = c.get('user');
+  const body = await c.req.json();
+  const exportRequest = VideoExportSchema.parse({
+    ...body,
+    requestedBy: user.id
+  });
+
+  const exportId = await videoService.exportVideo(exportRequest, tenantId);
+  return c.json({ exportId });
+});
+
+app.get('/export/:id', async (c) => {
+  const tenantId = c.get('tenantId');
+  const exportId = c.req.param('id');
+
+  const exportRecord = await prisma.videoExport.findFirst({
+    where: {
+      id: exportId,
+      tenantId
+    }
+  });
+
+  if (!exportRecord) {
+    throw new HTTPException(404, { message: 'Export not found' });
+  }
+
+  return c.json(exportRecord);
+});
+
+app.get('/export/:id/download', async (c) => {
+  const tenantId = c.get('tenantId');
+  const exportId = c.req.param('id');
+
+  const exportRecord = await prisma.videoExport.findFirst({
+    where: {
+      id: exportId,
+      tenantId,
+      status: 'completed'
+    }
+  });
+
+  if (!exportRecord || !exportRecord.filePath) {
+    throw new HTTPException(404, { message: 'Export file not found' });
+  }
+
+  try {
+    const fileContent = await fs.readFile(exportRecord.filePath);
+    c.header('Content-Type', 'application/octet-stream');
+    c.header('Content-Disposition', `attachment; filename="export_${exportId}.${exportRecord.format}"`);
+    return c.body(fileContent);
+  } catch (error) {
+    throw new HTTPException(404, { message: 'Export file not found' });
+  }
+});
+
+// Analytics configuration
+app.post('/analytics/configure', async (c) => {
+  const tenantId = c.get('tenantId');
+  const body = await c.req.json();
+  const config = AnalyticsConfigSchema.parse(body);
+
+  await videoService.configureAnalytics(config, tenantId);
+  return c.json({ message: 'Analytics configured successfully' });
+});
+
+app.get('/analytics/events', async (c) => {
+  const tenantId = c.get('tenantId');
+  const cameraId = c.req.query('cameraId');
+  const eventType = c.req.query('eventType');
+  const startTime = c.req.query('startTime');
+  const endTime = c.req.query('endTime');
+
+  const events = await prisma.analyticsEvent.findMany({
+    where: {
+      tenantId,
+      ...(cameraId && { cameraId }),
+      ...(eventType && { type: eventType }),
+      ...(startTime && endTime && {
+        timestamp: {
+          gte: new Date(startTime),
+          lte: new Date(endTime)
+        }
+      })
+    },
+    include: {
+      camera: {
+        select: { name: true }
+      }
+    },
+    orderBy: { timestamp: 'desc' },
+    take: 100
+  });
+
+  return c.json(events);
+});
+
+// Privacy masks
+app.post('/cameras/:id/privacy-masks', async (c) => {
+  const tenantId = c.get('tenantId');
+  const cameraId = c.req.param('id');
+  const { masks } = await c.req.json();
+
+  const camera = await prisma.camera.findFirst({
+    where: {
+      id: cameraId,
+      tenantId
+    }
+  });
+
+  if (!camera) {
+    throw new HTTPException(404, { message: 'Camera not found' });
+  }
+
+  await prisma.camera.update({
+    where: { id: cameraId },
+    data: { privacyMasks: masks }
+  });
+
+  // Log privacy mask changes for audit
+  await prisma.auditLog.create({
+    data: {
+      tenantId,
+      action: 'privacy_mask_updated',
+      resourceType: 'camera',
+      resourceId: cameraId,
+      details: { masks },
+      timestamp: new Date()
+    }
+  });
+
+  return c.json({ message: 'Privacy masks updated successfully' });
+});
+
+// System status
+app.get('/status', async (c) => {
+  const tenantId = c.get('tenantId');
+
+  const stats = await Promise.all([
+    prisma.camera.count({ where: { tenantId } }),
+    prisma.camera.count({ where: { tenantId, status: 'online' } }),
+    prisma.videoRecording.count({ 
+      where: { 
+        tenantId,
+        status: 'recording'
+      }
+    }),
+    prisma.videoRecording.aggregate({
+      where: { tenantId },
+      _sum: { fileSize: true }
+    })
+  ]);
+
+  return c.json({
+    totalCameras: stats[0],
+    onlineCameras: stats[1],
+    activeRecordings: stats[2],
+    totalStorageUsed: stats[3]._sum.fileSize || 0,
+    activeStreams: videoService.streamingSessions.size,
+    analyticsProcessors: videoService.analyticsProcessors.size
+  });
+});
+
+// Error handling
+app.onError((err, c) => {
+  console.error('Video management service error:', err);
+  
+  if (err instanceof HTTPException) {
+    return c.json({
+      error: err.message,
+      status: err.status
+    }, err.status);
+  }
+
+  return c.json({
+    error: 'Internal server error',
+    status: 500
+  }, 500);
+});
+
+// Start server
+const port = parseInt(process.env.PORT || '3003');
+const server = createServer(serve(app));
+
+// Socket.IO for real-time updates
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: process.env.CORS_ORIGIN || '*',
+    credentials: true
+  }
+});
+
+// Socket.IO authentication
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    return next(new Error('Authentication required'));
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+    socket.data.user = payload;
+    socket.data.tenantId = payload.tenantId;
+    next();
+  } catch (error) {
+    next(new Error('Invalid token'));
+  }
+});
+
+// Socket.IO event handlers
+io.on('connection', (socket) => {
+  const tenantId = socket.data.tenantId;
+  
+  // Join tenant-specific room
+  socket.join(`tenant:${tenantId}`);
+  
+  console.log(`Video client connected: ${socket.id} (tenant: ${tenantId})`);
+
+  socket.on('subscribe-camera', (cameraId) => {
+    socket.join(`camera:${cameraId}`);
+  });
+
+  socket.on('unsubscribe-camera', (cameraId) => {
+    socket.leave(`camera:${cameraId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`Video client disconnected: ${socket.id}`);
+  });
+});
+
+// Event emitter handlers for real-time updates
+eventEmitter.on('analytics-alert', (alert) => {
+  io.to(`tenant:${alert.tenantId}`).emit('analytics-alert', alert);
+  io.to(`camera:${alert.cameraId}`).emit('camera-alert', alert);
+});
+
+eventEmitter.on('camera-status-change', (event) => {
+  io.to(`tenant:${event.tenantId}`).emit('camera-status', event);
+  io.to(`camera:${event.cameraId}`).emit('status-change', event);
+});
+
+eventEmitter.on('recording-complete', (event) => {
+  io.to(`tenant:${event.tenantId}`).emit('recording-complete', event);
+});
+
+// Test endpoint for health checks and monitoring
+app.get('/test/health-detailed', async (c) => {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new HTTPException(404, { message: 'Not found' });
+  }
+
+  const metrics = await videoService.getSystemMetrics();
+  const dbHealth = await prisma.$queryRaw`SELECT 1 as health`;
+  const redisHealth = await redis.ping();
+
+  return c.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    metrics,
+    dependencies: {
+      database: dbHealth ? 'healthy' : 'unhealthy',
+      redis: redisHealth === 'PONG' ? 'healthy' : 'unhealthy'
+    },
+    version: process.env.npm_package_version || '1.0.0'
+  });
+});
+
+// Test endpoint for triggering specific scenarios
+app.post('/test/trigger/:scenario', async (c) => {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new HTTPException(404, { message: 'Not found' });
+  }
+
+  const scenario = c.req.param('scenario');
+  const { data } = await c.req.json();
+
+  switch (scenario) {
+    case 'motion-detection':
+      await videoService['handleMotionDetection'](data);
+      break;
+    case 'camera-offline':
+      await videoService['handleCameraOffline'](data);
+      break;
+    case 'access-event':
+      await videoService['handleAccessEvent'](data);
+      break;
+    case 'analytics-alert':
+      eventEmitter.emit('analytics-alert', data);
+      break;
+    default:
+      throw new HTTPException(400, { message: 'Unknown scenario' });
+  }
+
+  return c.json({ message: `Triggered ${scenario} scenario` });
+});
+
+// Test endpoint for cleanup
+app.post('/test/cleanup', async (c) => {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new HTTPException(404, { message: 'Not found' });
+  }
+
+  // Clear all sessions and jobs
+  videoService.getStreamingSessions().clear();
+  videoService.getRecordingJobs().clear();
+  videoService.getAnalyticsProcessors().clear();
+
+  // Clear Redis test data
+  const keys = await redis.keys('test:*');
+  if (keys.length > 0) {
+    await redis.del(...keys);
+  }
+
+  return c.json({ message: 'Test cleanup completed' });
+});
+
+// Enhanced error handling with test support
+app.onError((err, c) => {
+  console.error('Video management service error:', err);
+  
+  // Log error for test analysis
+  if (process.env.NODE_ENV === 'test') {
+    global.testErrors = global.testErrors || [];
+    global.testErrors.push({
+      error: err.message,
+      stack: err.stack,
+      timestamp: new Date(),
+      path: c.req.path,
+      method: c.req.method
+    });
+  }
+  
+  if (err instanceof HTTPException) {
+    return c.json({
+      error: err.message,
+      status: err.status,
+      ...(process.env.NODE_ENV === 'test' && { stack: err.stack })
+    }, err.status);
+  }
+
+  return c.json({
+    error: 'Internal server error',
+    status: 500,
+    ...(process.env.NODE_ENV === 'test' && { 
+      message: err.message,
+      stack: err.stack 
+    })
+  }, 500);
+});
+
+// Graceful shutdown with test considerations
+process.on('SIGTERM', async () => {
+  console.log('Shutting down video management service...');
+  
+  // Stop all streaming sessions
+  for (const sessionId of videoService.getStreamingSessions().keys()) {
+    await videoService.stopLiveStream(sessionId);
+  }
+  
+  // Stop all recording jobs
+  for (const [recordingId, job] of videoService.getRecordingJobs()) {
+    if (job && job.kill) {
+      job.kill();
+    }
+  }
+  
+  // Stop analytics processors
+  for (const processor of videoService.getAnalyticsProcessors().values()) {
+    processor.stop();
+  }
+  
+  await prisma.$disconnect();
+  await redis.disconnect();
+  
+  server.close(() => {
+    console.log('Video management service stopped');
+    process.exit(0);
+  });
+});
+
+// Start server with test mode considerations
+const startServer = () => {
+  if (process.env.NODE_ENV === 'test') {
+    console.log('Video management service starting in test mode');
+    return server;
+  }
+  
+  server.listen(port, () => {
+    console.log(`Video management service running on port ${port}`);
+  });
+  
+  return server;
+};
+
+// Export for testing
+export { 
+  app as default, 
+  VideoManagementService, 
+  videoService, 
+  testUtils, 
+  jestConfig, 
+  testSuites,
+  startServer,
+  prisma,
+  redis,
+  eventEmitter
+};
+
+// Start server if not in test mode
+if (process.env.NODE_ENV !== 'test') {
+  startServer();
+}

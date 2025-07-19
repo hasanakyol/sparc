@@ -1,0 +1,929 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testing-infrastructure-service
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: backend
+    tier: service
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: testing-infrastructure-service
+  template:
+    metadata:
+      labels:
+        app: testing-infrastructure-service
+        component: backend
+        tier: service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3012"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: testing-infrastructure-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+      - name: testing-infrastructure-service
+        image: sparc/testing-infrastructure-service:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 3012
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3012"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: redis-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: jwt-secret
+        - name: CORS_ORIGIN
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: cors-origin
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: sparc-config
+              key: log-level
+        - name: PLAYWRIGHT_BROWSERS_PATH
+          value: "/app/browsers"
+        - name: ARTILLERY_CONFIG_PATH
+          value: "/app/config/artillery"
+        - name: OWASP_ZAP_PATH
+          value: "/app/tools/zap"
+        - name: TEST_RESULTS_PATH
+          value: "/app/test-results"
+        - name: PERFORMANCE_THRESHOLD_CPU
+          valueFrom:
+            configMapKeyRef:
+              name: testing-infrastructure-config
+              key: performance-threshold-cpu
+        - name: PERFORMANCE_THRESHOLD_MEMORY
+          valueFrom:
+            configMapKeyRef:
+              name: testing-infrastructure-config
+              key: performance-threshold-memory
+        - name: PERFORMANCE_THRESHOLD_RESPONSE_TIME
+          valueFrom:
+            configMapKeyRef:
+              name: testing-infrastructure-config
+              key: performance-threshold-response-time
+        - name: LOAD_TEST_MAX_DOORS
+          valueFrom:
+            configMapKeyRef:
+              name: testing-infrastructure-config
+              key: load-test-max-doors
+        - name: LOAD_TEST_MAX_VIDEO_STREAMS
+          valueFrom:
+            configMapKeyRef:
+              name: testing-infrastructure-config
+              key: load-test-max-video-streams
+        - name: COMPLIANCE_FRAMEWORKS
+          valueFrom:
+            configMapKeyRef:
+              name: testing-infrastructure-config
+              key: compliance-frameworks
+        - name: OFFLINE_TEST_DURATION_HOURS
+          valueFrom:
+            configMapKeyRef:
+              name: testing-infrastructure-config
+              key: offline-test-duration-hours
+        - name: MESH_NETWORK_TEST_NODES
+          valueFrom:
+            configMapKeyRef:
+              name: testing-infrastructure-config
+              key: mesh-network-test-nodes
+        - name: HARDWARE_TEST_DEVICES
+          valueFrom:
+            configMapKeyRef:
+              name: testing-infrastructure-config
+              key: hardware-test-devices
+        - name: CI_CD_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: ci-cd-webhook-secret
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: slack-webhook-url
+        - name: EMAIL_SMTP_HOST
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: email-smtp-host
+        - name: EMAIL_SMTP_USER
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: email-smtp-user
+        - name: EMAIL_SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sparc-secrets
+              key: email-smtp-password
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 30
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: logs
+          mountPath: /app/logs
+        - name: test-results
+          mountPath: /app/test-results
+        - name: browsers
+          mountPath: /app/browsers
+        - name: artillery-config
+          mountPath: /app/config/artillery
+        - name: zap-tools
+          mountPath: /app/tools/zap
+        - name: test-data
+          mountPath: /app/test-data
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+      - name: test-results
+        persistentVolumeClaim:
+          claimName: testing-infrastructure-results-pvc
+      - name: browsers
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: artillery-config
+        configMap:
+          name: artillery-config
+      - name: zap-tools
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: test-data
+        configMap:
+          name: test-data-config
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - testing-infrastructure-service
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+      - key: "sparc.io/testing-infrastructure-service"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testing-infrastructure-service
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: backend
+    tier: service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: testing-infrastructure-service
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: testing-infrastructure-service
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: backend
+    tier: service
+automountServiceAccountToken: true
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: testing-infrastructure-service
+  labels:
+    app: testing-infrastructure-service
+    component: backend
+    tier: service
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: testing-infrastructure-service
+  labels:
+    app: testing-infrastructure-service
+    component: backend
+    tier: service
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: testing-infrastructure-service
+subjects:
+- kind: ServiceAccount
+  name: testing-infrastructure-service
+  namespace: sparc
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: testing-infrastructure-service-hpa
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: backend
+    tier: service
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: testing-infrastructure-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+      - type: Pods
+        value: 3
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: testing-infrastructure-service-pdb
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: backend
+    tier: service
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: testing-infrastructure-service
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: testing-infrastructure-service-netpol
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: backend
+    tier: service
+spec:
+  podSelector:
+    matchLabels:
+      app: testing-infrastructure-service
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    - podSelector:
+        matchLabels:
+          app: nginx-ingress
+    ports:
+    - protocol: TCP
+      port: 3012
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 3012
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3002
+    - protocol: TCP
+      port: 3003
+    - protocol: TCP
+      port: 3004
+    - protocol: TCP
+      port: 3005
+    - protocol: TCP
+      port: 3006
+    - protocol: TCP
+      port: 3007
+    - protocol: TCP
+      port: 3008
+    - protocol: TCP
+      port: 3009
+    - protocol: TCP
+      port: 3010
+    - protocol: TCP
+      port: 3011
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: sparc
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testing-infrastructure-config
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: config
+data:
+  performance-threshold-cpu: "80"
+  performance-threshold-memory: "85"
+  performance-threshold-response-time: "2000"
+  load-test-max-doors: "10000"
+  load-test-max-video-streams: "1000"
+  compliance-frameworks: "SOX,HIPAA,PCI-DSS,GDPR"
+  offline-test-duration-hours: "72"
+  mesh-network-test-nodes: "50"
+  hardware-test-devices: "cameras,card-readers,door-controllers,sensors"
+  test-execution-timeout: "3600"
+  parallel-test-workers: "4"
+  test-retry-attempts: "3"
+  performance-monitoring-interval: "30"
+  compliance-validation-schedule: "0 2 * * *"
+  load-test-ramp-up-duration: "300"
+  load-test-steady-duration: "1800"
+  load-test-ramp-down-duration: "300"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: artillery-config
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: config
+data:
+  load-test-config.yml: |
+    config:
+      target: 'http://api-gateway.sparc.svc.cluster.local'
+      phases:
+        - duration: 300
+          arrivalRate: 10
+          name: "Warm up"
+        - duration: 1800
+          arrivalRate: 100
+          name: "Load test"
+        - duration: 300
+          arrivalRate: 10
+          name: "Cool down"
+      defaults:
+        headers:
+          Authorization: 'Bearer {{ $processEnvironment.TEST_JWT_TOKEN }}'
+    scenarios:
+      - name: "Access Control Load Test"
+        weight: 40
+        flow:
+          - get:
+              url: "/api/v1/access-control/doors"
+          - post:
+              url: "/api/v1/access-control/events"
+              json:
+                doorId: "{{ $randomString() }}"
+                userId: "{{ $randomString() }}"
+                action: "access_granted"
+      - name: "Video Management Load Test"
+        weight: 30
+        flow:
+          - get:
+              url: "/api/v1/video-management/cameras"
+          - get:
+              url: "/api/v1/video-management/streams/{{ $randomString() }}"
+      - name: "Analytics Load Test"
+        weight: 20
+        flow:
+          - get:
+              url: "/api/v1/analytics/occupancy"
+          - post:
+              url: "/api/v1/analytics/events"
+              json:
+                type: "motion_detected"
+                cameraId: "{{ $randomString() }}"
+      - name: "Environmental Load Test"
+        weight: 10
+        flow:
+          - get:
+              url: "/api/v1/environmental/sensors"
+          - post:
+              url: "/api/v1/environmental/readings"
+              json:
+                sensorId: "{{ $randomString() }}"
+                temperature: "{{ $randomNumber(15, 30) }}"
+                humidity: "{{ $randomNumber(30, 70) }}"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-data-config
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: config
+data:
+  compliance-test-data.json: |
+    {
+      "sox": {
+        "requirements": [
+          "audit_trail_integrity",
+          "access_control_segregation",
+          "data_retention_7_years",
+          "change_management_controls"
+        ],
+        "test_cases": [
+          "verify_audit_log_immutability",
+          "test_role_based_access_control",
+          "validate_data_retention_policy",
+          "check_change_approval_workflow"
+        ]
+      },
+      "hipaa": {
+        "requirements": [
+          "phi_encryption_at_rest",
+          "phi_encryption_in_transit",
+          "access_logging",
+          "minimum_necessary_access"
+        ],
+        "test_cases": [
+          "verify_database_encryption",
+          "test_tls_communication",
+          "validate_access_audit_logs",
+          "check_role_permissions"
+        ]
+      },
+      "pci_dss": {
+        "requirements": [
+          "cardholder_data_protection",
+          "secure_network_transmission",
+          "access_control_measures",
+          "vulnerability_management"
+        ],
+        "test_cases": [
+          "verify_card_data_encryption",
+          "test_network_segmentation",
+          "validate_access_controls",
+          "check_security_scanning"
+        ]
+      }
+    }
+  hardware-test-scenarios.json: |
+    {
+      "cameras": {
+        "manufacturers": ["Axis", "Hikvision", "Dahua", "Hanwha", "Bosch"],
+        "protocols": ["ONVIF", "RTSP", "HTTP"],
+        "test_scenarios": [
+          "device_discovery",
+          "stream_quality_validation",
+          "ptz_control_verification",
+          "motion_detection_accuracy",
+          "night_vision_performance"
+        ]
+      },
+      "card_readers": {
+        "manufacturers": ["HID", "Honeywell", "ASSA ABLOY"],
+        "protocols": ["OSDP", "Wiegand", "RS485"],
+        "test_scenarios": [
+          "card_read_accuracy",
+          "communication_reliability",
+          "tamper_detection",
+          "led_buzzer_control",
+          "offline_operation"
+        ]
+      },
+      "door_controllers": {
+        "manufacturers": ["HID", "Honeywell", "Bosch"],
+        "protocols": ["OSDP", "TCP/IP", "RS485"],
+        "test_scenarios": [
+          "door_control_commands",
+          "status_monitoring",
+          "alarm_handling",
+          "backup_power_operation",
+          "network_failover"
+        ]
+      }
+    }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: testing-infrastructure-results-pvc
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: gp3
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: testing-infrastructure-service
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: testing-infrastructure-service
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: testing-infrastructure-service-alerts
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: monitoring
+spec:
+  groups:
+  - name: testing-infrastructure-service.rules
+    rules:
+    - alert: TestingInfrastructureServiceDown
+      expr: up{job="testing-infrastructure-service"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: testing-infrastructure-service
+      annotations:
+        summary: "Testing Infrastructure Service is down"
+        description: "Testing Infrastructure Service has been down for more than 1 minute"
+    
+    - alert: TestingInfrastructureServiceHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"testing-infrastructure-service-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        service: testing-infrastructure-service
+      annotations:
+        summary: "Testing Infrastructure Service high memory usage"
+        description: "Testing Infrastructure Service memory usage is above 90% for more than 5 minutes"
+    
+    - alert: TestingInfrastructureServiceHighCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{pod=~"testing-infrastructure-service-.*"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        service: testing-infrastructure-service
+      annotations:
+        summary: "Testing Infrastructure Service high CPU usage"
+        description: "Testing Infrastructure Service CPU usage is above 80% for more than 5 minutes"
+    
+    - alert: LoadTestFailure
+      expr: increase(testing_load_test_failures_total[5m]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: testing-infrastructure-service
+      annotations:
+        summary: "Load test failure detected"
+        description: "Load test has failed {{ $value }} times in the last 5 minutes"
+    
+    - alert: PerformanceThresholdExceeded
+      expr: testing_response_time_seconds > 2
+      for: 2m
+      labels:
+        severity: warning
+        service: testing-infrastructure-service
+      annotations:
+        summary: "Performance threshold exceeded"
+        description: "Response time {{ $value }}s exceeds threshold of 2s"
+    
+    - alert: ComplianceTestFailure
+      expr: increase(testing_compliance_test_failures_total[1h]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: testing-infrastructure-service
+      annotations:
+        summary: "Compliance test failure"
+        description: "Compliance test has failed {{ $value }} times in the last hour"
+    
+    - alert: HardwareIntegrationTestFailure
+      expr: increase(testing_hardware_test_failures_total[30m]) > 0
+      for: 1m
+      labels:
+        severity: warning
+        service: testing-infrastructure-service
+      annotations:
+        summary: "Hardware integration test failure"
+        description: "Hardware integration test has failed {{ $value }} times in the last 30 minutes"
+    
+    - alert: OfflineResilienceTestFailure
+      expr: increase(testing_offline_test_failures_total[1h]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: testing-infrastructure-service
+      annotations:
+        summary: "Offline resilience test failure"
+        description: "Offline resilience test has failed {{ $value }} times in the last hour"
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: compliance-validation-job
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: compliance
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: testing-infrastructure-service
+            component: compliance-job
+        spec:
+          serviceAccountName: testing-infrastructure-service
+          restartPolicy: OnFailure
+          containers:
+          - name: compliance-validator
+            image: sparc/testing-infrastructure-service:latest
+            command: ["node", "dist/compliance-validator.js"]
+            env:
+            - name: NODE_ENV
+              value: "production"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: sparc-secrets
+                  key: database-url
+            - name: COMPLIANCE_FRAMEWORKS
+              valueFrom:
+                configMapKeyRef:
+                  name: testing-infrastructure-config
+                  key: compliance-frameworks
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "250m"
+              limits:
+                memory: "1Gi"
+                cpu: "500m"
+            volumeMounts:
+            - name: test-results
+              mountPath: /app/test-results
+            - name: test-data
+              mountPath: /app/test-data
+          volumes:
+          - name: test-results
+            persistentVolumeClaim:
+              claimName: testing-infrastructure-results-pvc
+          - name: test-data
+            configMap:
+              name: test-data-config
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: performance-monitoring-job
+  namespace: sparc
+  labels:
+    app: testing-infrastructure-service
+    component: performance
+spec:
+  schedule: "*/30 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: testing-infrastructure-service
+            component: performance-job
+        spec:
+          serviceAccountName: testing-infrastructure-service
+          restartPolicy: OnFailure
+          containers:
+          - name: performance-monitor
+            image: sparc/testing-infrastructure-service:latest
+            command: ["node", "dist/performance-monitor.js"]
+            env:
+            - name: NODE_ENV
+              value: "production"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: sparc-secrets
+                  key: database-url
+            - name: PERFORMANCE_THRESHOLD_CPU
+              valueFrom:
+                configMapKeyRef:
+                  name: testing-infrastructure-config
+                  key: performance-threshold-cpu
+            - name: PERFORMANCE_THRESHOLD_MEMORY
+              valueFrom:
+                configMapKeyRef:
+                  name: testing-infrastructure-config
+                  key: performance-threshold-memory
+            - name: PERFORMANCE_THRESHOLD_RESPONSE_TIME
+              valueFrom:
+                configMapKeyRef:
+                  name: testing-infrastructure-config
+                  key: performance-threshold-response-time
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "250m"
+            volumeMounts:
+            - name: test-results
+              mountPath: /app/test-results
+          volumes:
+          - name: test-results
+            persistentVolumeClaim:
+              claimName: testing-infrastructure-results-pvc

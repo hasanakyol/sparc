@@ -1,0 +1,276 @@
+groups:
+  - name: critical_error_monitoring
+    interval: 15s
+    rules:
+      # Service availability alerts
+      - alert: ServiceDown
+        expr: |
+          up{job=~".*service.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+          page: true
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} has been down for more than 1 minute"
+          runbook_url: "https://wiki.sparc.com/runbooks/service-down"
+          dashboard_url: "https://grafana.sparc.com/d/sparc-real-time-error-alerts"
+
+      # Catastrophic error rate
+      - alert: CatastrophicErrorRate
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[2m])) by (service) 
+          / sum(rate(http_requests_total[2m])) by (service)) > 0.25
+        for: 30s
+        labels:
+          severity: critical
+          team: platform
+          page: true
+          incident_priority: P1
+        annotations:
+          summary: "Catastrophic error rate in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has {{ $value | humanizePercentage }} error rate (>25%)"
+          runbook_url: "https://wiki.sparc.com/runbooks/catastrophic-errors"
+          action: "IMMEDIATE ACTION REQUIRED - Consider emergency shutdown"
+
+      # Total service failure
+      - alert: ServiceTotalFailure
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[1m])) by (service) 
+          / sum(rate(http_requests_total[1m])) by (service)) == 1
+        for: 15s
+        labels:
+          severity: critical
+          team: platform
+          page: true
+          incident_priority: P1
+        annotations:
+          summary: "Total failure in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} is returning 100% errors"
+          runbook_url: "https://wiki.sparc.com/runbooks/total-failure"
+          action: "Emergency rollback or service restart required"
+
+      # Multi-service cascade
+      - alert: MultiServiceCascadeFailure
+        expr: |
+          count(
+            (sum(rate(http_requests_total{status=~"5.."}[2m])) by (service) 
+            / sum(rate(http_requests_total[2m])) by (service)) > 0.20
+          ) > 5
+        for: 30s
+        labels:
+          severity: critical
+          team: platform
+          page: true
+          incident_priority: P1
+          incident_type: major_outage
+        annotations:
+          summary: "Major cascade failure affecting {{ $value }} services"
+          description: "{{ $value }} services are experiencing >20% error rates simultaneously"
+          runbook_url: "https://wiki.sparc.com/runbooks/cascade-failure-major"
+          action: "MAJOR INCIDENT - Activate crisis response team"
+
+      # Database connection exhaustion
+      - alert: DatabaseConnectionPoolCritical
+        expr: |
+          (database_connection_pool_size - database_connection_pool_active) 
+          / database_connection_pool_size < 0.05
+        for: 30s
+        labels:
+          severity: critical
+          team: database
+          page: true
+        annotations:
+          summary: "Critical: Database connection pool nearly exhausted"
+          description: "Service {{ $labels.service }} has only {{ $value | humanizePercentage }} connections available"
+          runbook_url: "https://wiki.sparc.com/runbooks/db-pool-critical"
+          action: "Immediate intervention required - increase pool size or reduce load"
+
+      # Security incident detection
+      - alert: SecurityIncidentDetected
+        expr: |
+          (rate(authentication_failures_total[1m]) > 50)
+          or
+          (rate(authorization_failures_total[1m]) > 100)
+        for: 30s
+        labels:
+          severity: critical
+          team: security
+          page: true
+          security_incident: true
+          incident_priority: P1
+        annotations:
+          summary: "Potential security incident detected"
+          description: "Abnormally high authentication/authorization failures detected"
+          runbook_url: "https://wiki.sparc.com/runbooks/security-incident"
+          action: "SECURITY ALERT - Investigate immediately for potential attack"
+
+      # Video system failure
+      - alert: VideoSystemFailure
+        expr: |
+          (sum(rate(video_processing_errors_total[2m])) > 10)
+          and
+          (sum(rate(video_stream_failures_total[2m])) > 5)
+        for: 1m
+        labels:
+          severity: critical
+          team: video
+          page: true
+        annotations:
+          summary: "Video system experiencing critical failures"
+          description: "Both video processing and streaming are failing at high rates"
+          runbook_url: "https://wiki.sparc.com/runbooks/video-system-failure"
+          dashboard_url: "https://grafana.sparc.com/d/sparc-video-monitoring"
+
+      # Memory exhaustion
+      - alert: ServiceMemoryExhaustion
+        expr: |
+          (container_memory_usage_bytes / container_spec_memory_limit_bytes) > 0.95
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          page: true
+        annotations:
+          summary: "Service {{ $labels.pod }} memory exhaustion"
+          description: "Service {{ $labels.pod }} is using {{ $value | humanizePercentage }} of memory limit"
+          runbook_url: "https://wiki.sparc.com/runbooks/memory-exhaustion"
+          action: "Service likely to be OOM killed - investigate memory leak or increase limits"
+
+  - name: error_correlation_detection
+    interval: 30s
+    rules:
+      # Correlated infrastructure failures
+      - alert: InfrastructureCorrelatedFailure
+        expr: |
+          (
+            (sum(rate(redis_errors_total[2m])) > 5)
+            and
+            (sum(rate(database_errors_total[2m])) > 10)
+          )
+          or
+          (
+            (sum(rate(kafka_producer_errors_total[2m])) > 5)
+            and
+            (sum(rate(s3_operation_errors_total[2m])) > 5)
+          )
+        for: 1m
+        labels:
+          severity: critical
+          team: infrastructure
+          page: true
+          incident_type: infrastructure_failure
+        annotations:
+          summary: "Multiple infrastructure components failing"
+          description: "Correlated failures detected across infrastructure services"
+          runbook_url: "https://wiki.sparc.com/runbooks/infrastructure-correlation"
+          action: "Check cloud provider status and network connectivity"
+
+      # API Gateway overload
+      - alert: APIGatewayOverload
+        expr: |
+          (sum(rate(http_requests_total{service="api-gateway",status=~"5.."}[1m])) 
+          / sum(rate(http_requests_total{service="api-gateway"}[1m]))) > 0.15
+          and
+          (rate(http_requests_total{service="api-gateway"}[1m]) > 1000)
+        for: 30s
+        labels:
+          severity: critical
+          team: platform
+          page: true
+        annotations:
+          summary: "API Gateway overloaded and failing"
+          description: "API Gateway handling >1000 req/s with {{ $value | humanizePercentage }} error rate"
+          runbook_url: "https://wiki.sparc.com/runbooks/api-gateway-overload"
+          action: "Scale API Gateway immediately or enable rate limiting"
+
+      # Error budget emergency
+      - alert: ErrorBudgetEmergency
+        expr: |
+          ((1 - (sum(increase(http_requests_total{status!~"5.."}[1h])) by (service)
+          / sum(increase(http_requests_total[1h])) by (service))) 
+          / (1 - 0.99)) > 50
+        for: 5m
+        labels:
+          severity: critical
+          team: sre
+          page: true
+          incident_priority: P2
+        annotations:
+          summary: "Error budget burn rate emergency for {{ $labels.service }}"
+          description: "Service {{ $labels.service }} burning error budget at {{ $value }}x rate - will exhaust in < 1 hour"
+          runbook_url: "https://wiki.sparc.com/runbooks/error-budget-emergency"
+          action: "Freeze deployments and investigate immediately"
+
+  - name: data_loss_prevention
+    interval: 30s
+    rules:
+      # Write failures that could cause data loss
+      - alert: CriticalWriteFailures
+        expr: |
+          (sum(rate(database_write_errors_total[2m])) by (service) > 5)
+          or
+          (sum(rate(s3_upload_errors_total[2m])) by (service) > 10)
+        for: 1m
+        labels:
+          severity: critical
+          team: data
+          page: true
+          data_loss_risk: true
+        annotations:
+          summary: "Critical write failures - potential data loss"
+          description: "Service {{ $labels.service }} experiencing write failures that may cause data loss"
+          runbook_url: "https://wiki.sparc.com/runbooks/write-failures"
+          action: "URGENT - Investigate write path and enable write-ahead logging"
+
+      # Backup system failures
+      - alert: BackupSystemFailure
+        expr: |
+          (time() - backup_last_success_timestamp) > 86400
+        for: 5m
+        labels:
+          severity: critical
+          team: infrastructure
+          page: true
+        annotations:
+          summary: "Backup system hasn't completed successfully in 24 hours"
+          description: "Last successful backup was {{ $value | humanizeDuration }} ago"
+          runbook_url: "https://wiki.sparc.com/runbooks/backup-failure"
+          action: "Critical - investigate backup system immediately"
+
+  - name: tenant_isolation_breach
+    interval: 30s
+    rules:
+      # Cross-tenant data access attempts
+      - alert: TenantIsolationBreach
+        expr: |
+          sum(rate(tenant_isolation_violations_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: security
+          page: true
+          security_incident: true
+          incident_priority: P1
+        annotations:
+          summary: "SECURITY: Tenant isolation breach detected"
+          description: "Cross-tenant access violations detected - immediate investigation required"
+          runbook_url: "https://wiki.sparc.com/runbooks/tenant-isolation-breach"
+          action: "SECURITY CRITICAL - Possible data breach, activate security response"
+
+      # Unauthorized admin access
+      - alert: UnauthorizedAdminAccess
+        expr: |
+          sum(rate(admin_access_unauthorized_total[5m])) > 0
+        for: 30s
+        labels:
+          severity: critical
+          team: security
+          page: true
+          security_incident: true
+        annotations:
+          summary: "Unauthorized admin access attempt detected"
+          description: "Unauthorized attempts to access admin functions detected"
+          runbook_url: "https://wiki.sparc.com/runbooks/unauthorized-admin"
+          action: "Security incident - review access logs immediately"

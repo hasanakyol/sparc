@@ -1,0 +1,253 @@
+# Load Balancing Configurations for Service Mesh
+
+# Consistent Hash Load Balancing for Video Streaming
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: video-streaming-consistent-hash
+  namespace: sparc
+spec:
+  host: video-processor
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpCookie:
+          name: "video-session"
+          ttl: 3600s
+          path: "/"
+    connectionPool:
+      tcp:
+        maxConnections: 2000
+      http:
+        http2MaxRequests: 2000
+        maxRequestsPerConnection: 1
+---
+# Least Request Load Balancing for API Gateway
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: api-gateway-least-request
+  namespace: sparc
+spec:
+  host: api-gateway
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_REQUEST
+    connectionPool:
+      tcp:
+        maxConnections: 1000
+      http:
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 2
+---
+# Session Affinity for Auth Service
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: auth-service-session-affinity
+  namespace: sparc
+spec:
+  host: auth-service
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: "x-session-id"
+    connectionPool:
+      tcp:
+        maxConnections: 500
+      http:
+        http2MaxRequests: 500
+        maxRequestsPerConnection: 2
+---
+# Geographic Load Balancing for Multi-Region
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: multi-region-load-balancing
+  namespace: sparc
+spec:
+  host: api-gateway
+  trafficPolicy:
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+    loadBalancer:
+      localityLbSetting:
+        enabled: true
+        distribute:
+        - from: region/us-east-1/*
+          to:
+            "region/us-east-1/*": 80
+            "region/us-west-2/*": 20
+        - from: region/us-west-2/*
+          to:
+            "region/us-west-2/*": 80
+            "region/us-east-1/*": 20
+        failover:
+        - from: region/us-east-1
+          to: region/us-west-2
+        - from: region/us-west-2
+          to: region/us-east-1
+---
+# Weighted Load Balancing for Canary
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: weighted-canary-load-balancing
+  namespace: sparc
+spec:
+  host: analytics-service
+  subsets:
+  - name: stable
+    labels:
+      version: stable
+  - name: canary
+    labels:
+      version: canary
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+---
+# Maglev Consistent Hash for Cache-Friendly LB
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: cache-friendly-load-balancing
+  namespace: sparc
+spec:
+  host: content-service
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        maglev:
+          tableSize: 65537  # Prime number for better distribution
+    connectionPool:
+      tcp:
+        maxConnections: 1000
+---
+# Ring Hash Load Balancing for Large Scale
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: ring-hash-load-balancing
+  namespace: sparc
+spec:
+  host: storage-service
+  trafficPolicy:
+    loadBalancer:
+      consistentHash:
+        ringHash:
+          minimumRingSize: 1024
+          maximumRingSize: 8192
+---
+# Service-specific load balancing with health checks
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: health-based-load-balancing
+  namespace: sparc
+spec:
+  host: incident-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 500
+        connectTimeout: 30s
+        tcpKeepalive:
+          time: 7200s
+          interval: 75s
+          probes: 10
+      http:
+        http2MaxRequests: 500
+        maxRequestsPerConnection: 2
+        h2UpgradePolicy: UPGRADE
+        useClientProtocol: false
+    loadBalancer:
+      simple: ROUND_ROBIN
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: true
+---
+# Passive Health Checking Configuration
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: passive-health-checking
+  namespace: sparc
+spec:
+  host: "*.sparc.svc.cluster.local"
+  trafficPolicy:
+    outlierDetection:
+      consecutiveErrors: 5
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: true
+      enforcingConsecutiveErrors: 100
+      enforcingConsecutiveGatewayErrors: 100
+      enforcingSuccessRate: 100
+      successRateMinimumHosts: 5
+      successRateRequestVolume: 100
+---
+# Custom Load Balancing for gRPC Services
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: grpc-load-balancing
+  namespace: sparc
+spec:
+  host: grpc-service
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN  # gRPC works best with round-robin
+    connectionPool:
+      http:
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 2
+        h2UpgradePolicy: UPGRADE  # Force HTTP/2 for gRPC
+---
+# EndpointSlice for fine-grained control (Kubernetes 1.21+)
+apiVersion: v1
+kind: Service
+metadata:
+  name: video-processor-headless
+  namespace: sparc
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  clusterIP: None
+  selector:
+    app: video-processor
+  ports:
+  - port: 3002
+    targetPort: 3002
+---
+# Linkerd-specific load balancing
+apiVersion: policy.linkerd.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: linkerd-load-balancing
+  namespace: sparc
+spec:
+  parentRefs:
+  - name: api-gateway
+    namespace: sparc
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1
+    backendRefs:
+    - name: api-gateway
+      port: 3000
+      weight: 100
+    timeouts:
+      request: 30s
+      backendRequest: 10s

@@ -1,0 +1,108 @@
+title = "SPARC Gitleaks Configuration"
+
+[extend]
+# useDefault will extend the base configuration with the default gitleaks config
+useDefault = true
+
+# Additional custom rules for SPARC platform
+[[rules]]
+id = "jwt-token"
+description = "JWT Token"
+regex = '''eyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*'''
+tags = ["key", "JWT"]
+
+[[rules]]
+id = "aws-access-key"
+description = "AWS Access Key"
+regex = '''(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
+tags = ["key", "AWS"]
+
+[[rules]]
+id = "aws-secret-key"
+description = "AWS Secret Key"
+regex = '''(?i)aws(.{0,20})?(?-i)['\"][0-9a-zA-Z\/+]{40}['\"]'''
+tags = ["key", "AWS"]
+
+[[rules]]
+id = "private-key"
+description = "Private Key"
+regex = '''-----BEGIN (RSA|DSA|EC|PGP) PRIVATE KEY-----'''
+tags = ["key", "private"]
+
+[[rules]]
+id = "google-api-key"
+description = "Google API Key"
+regex = '''AIza[0-9A-Za-z\-_]{35}'''
+tags = ["key", "Google"]
+
+[[rules]]
+id = "slack-webhook"
+description = "Slack Webhook"
+regex = '''https://hooks\.slack\.com/services/T[a-zA-Z0-9_]{8}/B[a-zA-Z0-9_]{8}/[a-zA-Z0-9_]{24}'''
+tags = ["key", "Slack"]
+
+[[rules]]
+id = "database-connection-string"
+description = "Database Connection String with credentials"
+regex = '''(?i)(postgres|postgresql|mysql|mongodb|redis|mssql|oracle)://[^:]+:[^@]+@[^/]+/\w+'''
+tags = ["password", "database"]
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(api_key|apikey|api-key)\s*[:=]\s*['\"][0-9a-zA-Z\-_]{16,}['\"]'''
+tags = ["key", "generic"]
+
+[[rules]]
+id = "generic-secret"
+description = "Generic Secret"
+regex = '''(?i)(secret|password|passwd|pwd)\s*[:=]\s*['\"][^'\"]{8,}['\"]'''
+tags = ["password", "generic"]
+
+# Allowlist for false positives
+[allowlist]
+description = "Global allowlist"
+paths = [
+    # Ignore test files
+    '''.*test.*''',
+    '''.*spec.*''',
+    # Ignore documentation
+    '''.*\.md$''',
+    '''docs/.*''',
+    # Ignore package files
+    '''package-lock\.json''',
+    '''yarn\.lock''',
+    '''pnpm-lock\.yaml''',
+    # Ignore build outputs
+    '''dist/.*''',
+    '''build/.*''',
+    '''.next/.*''',
+    # Ignore example files
+    '''\.env\.example''',
+    '''\.env\.sample''',
+    '''example/.*''',
+]
+
+# Specific commit allowlist
+[[allowlist]]
+description = "Allowlist for specific commits"
+commits = [
+    # Add commit SHAs that should be ignored
+]
+
+# Regex-based allowlist for specific patterns
+[[allowlist]]
+description = "Allowlist placeholder secrets"
+regex = '''(?i)(password|secret|key)\s*[:=]\s*['\"]?(placeholder|example|changeme|your[_-]?secret|xxx+)['\"]?'''
+
+[[allowlist]]
+description = "Allowlist localhost URLs"
+regex = '''(?i)(mongodb|postgres|mysql|redis)://[^:]+:[^@]+@(localhost|127\.0\.0\.1)'''
+
+[[allowlist]]
+description = "Allowlist environment variable references"
+regex = '''process\.env\.[A-Z_]+'''
+
+[[allowlist]]
+description = "Allowlist TypeScript type definitions"
+regex = '''(?i)(password|secret|apikey|api_key):\s*(string|number|boolean)'''

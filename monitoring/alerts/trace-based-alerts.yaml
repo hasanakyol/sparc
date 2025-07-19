@@ -1,0 +1,219 @@
+groups:
+  - name: trace_analysis_alerts
+    interval: 30s
+    rules:
+      # High error rate in traces
+      - alert: HighTraceErrorRate
+        expr: |
+          (
+            sum(rate(traces_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m])) by (service_name)
+            /
+            sum(rate(traces_spanmetrics_calls_total[5m])) by (service_name)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: tracing
+        annotations:
+          summary: "High error rate in traces for {{ $labels.service_name }}"
+          description: "Service {{ $labels.service_name }} has error rate of {{ $value | humanizePercentage }} in traces"
+          runbook_url: "https://sparc.docs/runbooks/high-trace-error-rate"
+
+      # Critical error rate in traces
+      - alert: CriticalTraceErrorRate
+        expr: |
+          (
+            sum(rate(traces_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m])) by (service_name)
+            /
+            sum(rate(traces_spanmetrics_calls_total[5m])) by (service_name)
+          ) > 0.10
+        for: 2m
+        labels:
+          severity: critical
+          component: tracing
+        annotations:
+          summary: "Critical error rate in traces for {{ $labels.service_name }}"
+          description: "Service {{ $labels.service_name }} has critical error rate of {{ $value | humanizePercentage }} in traces"
+          runbook_url: "https://sparc.docs/runbooks/critical-trace-error-rate"
+
+      # High latency detected
+      - alert: HighTraceLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(traces_spanmetrics_duration_milliseconds_bucket[5m])) by (service_name, span_name, le)
+          ) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          component: tracing
+        annotations:
+          summary: "High latency detected in {{ $labels.service_name }} - {{ $labels.span_name }}"
+          description: "95th percentile latency is {{ $value }}ms for operation {{ $labels.span_name }} in service {{ $labels.service_name }}"
+          runbook_url: "https://sparc.docs/runbooks/high-trace-latency"
+
+      # Critical latency spike
+      - alert: CriticalLatencySpike
+        expr: |
+          (
+            histogram_quantile(0.95,
+              sum(rate(traces_spanmetrics_duration_milliseconds_bucket[5m])) by (service_name, span_name, le)
+            )
+            /
+            histogram_quantile(0.95,
+              sum(rate(traces_spanmetrics_duration_milliseconds_bucket[1h] offset 1h)) by (service_name, span_name, le)
+            )
+          ) > 2
+        for: 5m
+        labels:
+          severity: critical
+          component: tracing
+        annotations:
+          summary: "Critical latency spike in {{ $labels.service_name }} - {{ $labels.span_name }}"
+          description: "Latency has increased by {{ $value }}x compared to 1 hour ago for {{ $labels.span_name }}"
+          runbook_url: "https://sparc.docs/runbooks/critical-latency-spike"
+
+      # Trace export failures
+      - alert: TraceExportFailures
+        expr: |
+          sum(rate(otel_trace_span_processor_spans{result="failed"}[5m])) by (service_name) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: tracing
+        annotations:
+          summary: "Trace export failures in {{ $labels.service_name }}"
+          description: "Service {{ $labels.service_name }} is failing to export traces at rate {{ $value }} per second"
+          runbook_url: "https://sparc.docs/runbooks/trace-export-failures"
+
+      # Jaeger collector issues
+      - alert: JaegerCollectorDown
+        expr: up{job="jaeger"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: tracing
+        annotations:
+          summary: "Jaeger collector is down"
+          description: "Jaeger collector has been down for more than 2 minutes"
+          runbook_url: "https://sparc.docs/runbooks/jaeger-collector-down"
+
+      # Trace sampling issues
+      - alert: TraceSamplingTooLow
+        expr: |
+          (
+            sum(rate(otel_trace_span_processor_spans{processor="batch",result="success"}[5m])) by (service_name)
+            /
+            sum(rate(otel_trace_span_processor_spans{processor="batch"}[5m])) by (service_name)
+          ) < 0.001
+        for: 10m
+        labels:
+          severity: warning
+          component: tracing
+        annotations:
+          summary: "Trace sampling rate too low for {{ $labels.service_name }}"
+          description: "Service {{ $labels.service_name }} has sampling rate of {{ $value | humanizePercentage }}, may miss important traces"
+          runbook_url: "https://sparc.docs/runbooks/trace-sampling-low"
+
+      # Service dependency issues
+      - alert: ServiceDependencyErrors
+        expr: |
+          (
+            sum(rate(traces_spanmetrics_calls_total{span_kind="SPAN_KIND_CLIENT",status_code="STATUS_CODE_ERROR"}[5m])) 
+            by (service_name, peer_service)
+            /
+            sum(rate(traces_spanmetrics_calls_total{span_kind="SPAN_KIND_CLIENT"}[5m])) 
+            by (service_name, peer_service)
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+          component: tracing
+        annotations:
+          summary: "High error rate between {{ $labels.service_name }} and {{ $labels.peer_service }}"
+          description: "Service {{ $labels.service_name }} has {{ $value | humanizePercentage }} error rate when calling {{ $labels.peer_service }}"
+          runbook_url: "https://sparc.docs/runbooks/service-dependency-errors"
+
+      # Trace context propagation issues
+      - alert: TraceContextPropagationIssues
+        expr: |
+          (
+            sum(rate(traces_spanmetrics_calls_total{parent_span_id=""}[5m])) by (service_name)
+            /
+            sum(rate(traces_spanmetrics_calls_total[5m])) by (service_name)
+          ) > 0.20
+        for: 10m
+        labels:
+          severity: warning
+          component: tracing
+        annotations:
+          summary: "Trace context propagation issues in {{ $labels.service_name }}"
+          description: "{{ $value | humanizePercentage }} of spans in {{ $labels.service_name }} are missing parent context"
+          runbook_url: "https://sparc.docs/runbooks/trace-context-propagation"
+
+      # Database operation latency
+      - alert: DatabaseOperationSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(traces_spanmetrics_duration_milliseconds_bucket{span_name=~"db\\..*"}[5m])) 
+            by (service_name, span_name, le)
+          ) > 500
+        for: 5m
+        labels:
+          severity: warning
+          component: tracing
+          layer: database
+        annotations:
+          summary: "Slow database operation in {{ $labels.service_name }}"
+          description: "Database operation {{ $labels.span_name }} in {{ $labels.service_name }} has 95th percentile latency of {{ $value }}ms"
+          runbook_url: "https://sparc.docs/runbooks/slow-database-operation"
+
+      # Cache performance issues
+      - alert: CachePerformanceDegraded
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(traces_spanmetrics_duration_milliseconds_bucket{span_name=~"cache\\..*"}[5m])) 
+            by (service_name, span_name, le)
+          ) > 50
+        for: 5m
+        labels:
+          severity: warning
+          component: tracing
+          layer: cache
+        annotations:
+          summary: "Cache performance degraded in {{ $labels.service_name }}"
+          description: "Cache operation {{ $labels.span_name }} in {{ $labels.service_name }} has 95th percentile latency of {{ $value }}ms"
+          runbook_url: "https://sparc.docs/runbooks/cache-performance-degraded"
+
+      # Video processing latency
+      - alert: VideoProcessingLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(traces_spanmetrics_duration_milliseconds_bucket{span_name=~"video\\..*"}[5m])) 
+            by (service_name, span_name, le)
+          ) > 5000
+        for: 5m
+        labels:
+          severity: warning
+          component: tracing
+          domain: video
+        annotations:
+          summary: "Video processing latency high in {{ $labels.service_name }}"
+          description: "Video operation {{ $labels.span_name }} has 95th percentile latency of {{ $value }}ms"
+          runbook_url: "https://sparc.docs/runbooks/video-processing-latency"
+
+      # Access control latency
+      - alert: AccessControlLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(traces_spanmetrics_duration_milliseconds_bucket{span_name=~"access\\..*"}[5m])) 
+            by (service_name, span_name, le)
+          ) > 200
+        for: 5m
+        labels:
+          severity: critical
+          component: tracing
+          domain: security
+        annotations:
+          summary: "Access control latency critical in {{ $labels.service_name }}"
+          description: "Access control operation {{ $labels.span_name }} has 95th percentile latency of {{ $value }}ms"
+          runbook_url: "https://sparc.docs/runbooks/access-control-latency"

@@ -1,0 +1,165 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: sparc-istio-control-plane
+  namespace: istio-system
+spec:
+  # Use the default profile as base
+  profile: default
+  
+  # Component configuration
+  components:
+    pilot:
+      k8s:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2048Mi
+          limits:
+            cpu: 1000m
+            memory: 4096Mi
+        hpaSpec:
+          minReplicas: 2
+          maxReplicas: 5
+    
+    ingressGateways:
+    - name: istio-ingressgateway
+      namespace: istio-ingress
+      enabled: true
+      k8s:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+        hpaSpec:
+          minReplicas: 2
+          maxReplicas: 10
+        service:
+          type: LoadBalancer
+          ports:
+          - port: 80
+            targetPort: 8080
+            name: http2
+          - port: 443
+            targetPort: 8443
+            name: https
+          - port: 31400
+            targetPort: 31400
+            name: tcp
+          - port: 15443
+            targetPort: 15443
+            name: tls
+    
+    egressGateways:
+    - name: istio-egressgateway
+      namespace: istio-system
+      enabled: true
+      k8s:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+  
+  # Global mesh configuration
+  meshConfig:
+    # Enable automatic mutual TLS
+    defaultConfig:
+      proxyStatsMatcher:
+        inclusionRegexps:
+        - ".*outlier_detection.*"
+        - ".*circuit_breakers.*"
+        - ".*upstream_rq_retry.*"
+        - ".*upstream_rq_pending.*"
+        - ".*responseClass.*"
+        - ".*grpc.*"
+        - ".*tcp.*"
+      holdApplicationUntilProxyStarts: true
+    
+    # Access log configuration
+    accessLogFile: /dev/stdout
+    accessLogFormat: |
+      [%START_TIME%] "%REQ(:METHOD)% %REQ(X-ENVOY-ORIGINAL-PATH?:PATH)% %PROTOCOL%" %RESPONSE_CODE% %RESPONSE_FLAGS% %RESPONSE_CODE_DETAILS% %CONNECTION_TERMINATION_DETAILS% "%UPSTREAM_TRANSPORT_FAILURE_REASON%" %BYTES_RECEIVED% %BYTES_SENT% %DURATION% %RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)% "%REQ(X-FORWARDED-FOR)%" "%REQ(USER-AGENT)%" "%REQ(X-REQUEST-ID)%" "%REQ(:AUTHORITY)%" "%UPSTREAM_HOST%" %DOWNSTREAM_REMOTE_ADDRESS% %DOWNSTREAM_LOCAL_ADDRESS% %DOWNSTREAM_LOCAL_ADDRESS_WITHOUT_PORT% %UPSTREAM_CLUSTER%
+    
+    # Default tracing configuration
+    defaultConfig:
+      tracing:
+        sampling: 100.0
+        zipkin:
+          address: jaeger-collector.monitoring:9411
+    
+    # Enable telemetry v2
+    defaultProviders:
+      metrics:
+      - prometheus
+      accessLogging:
+      - otel
+    
+    extensionProviders:
+    - name: prometheus
+      prometheus:
+        service: prometheus.monitoring.svc.cluster.local
+        port: 9090
+    - name: otel
+      envoyOtelAls:
+        service: opentelemetry-collector.monitoring.svc.cluster.local
+        port: 4317
+    - name: jaeger
+      zipkin:
+        service: jaeger-collector.monitoring.svc.cluster.local
+        port: 9411
+  
+  # Global values
+  values:
+    global:
+      proxy:
+        # Enable automatic protocol detection
+        autoInject: enabled
+        
+        # Resource configuration
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 2000m
+            memory: 1024Mi
+        
+        # Increase keep-alive settings for video streaming
+        holdApplicationUntilProxyStarts: true
+        includeIPRanges: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+      
+      # Multi-cluster configuration
+      multiCluster:
+        clusterName: sparc-primary
+      
+      # Control plane security options
+      controlPlaneSecurityEnabled: true
+    
+    # Telemetry configuration
+    telemetry:
+      v2:
+        prometheus:
+          configOverride:
+            inboundSidecar:
+              disable_host_header_fallback: true
+              metric_expiry_duration: 10m
+            outboundSidecar:
+              disable_host_header_fallback: true
+              metric_expiry_duration: 10m
+            gateway:
+              disable_host_header_fallback: true
+        stackdriver:
+          configOverride:
+            disable_host_header_fallback: true
+    
+    # Pilot configuration
+    pilot:
+      env:
+        PILOT_ENABLE_WORKLOAD_ENTRY_AUTOREGISTRATION: true
+        PILOT_ENABLE_CROSS_CLUSTER_WORKLOAD_ENTRY: true

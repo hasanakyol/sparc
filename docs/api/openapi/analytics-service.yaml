@@ -1,0 +1,1126 @@
+openapi: 3.0.3
+info:
+  title: SPARC Analytics Service
+  description: |
+    The SPARC Analytics Service provides advanced analytics and insights for security operations,
+    including real-time dashboards, historical reporting, and predictive analytics.
+    
+    ## Core Features
+    
+    - Real-time operational dashboards
+    - Historical trend analysis
+    - Predictive analytics and anomaly detection
+    - Custom report generation
+    - KPI tracking and alerts
+    - Heat maps and visualization
+    - Occupancy analytics
+    - Incident correlation
+    - Resource utilization metrics
+    
+    ## Analytics Categories
+    
+    - **Security Analytics**: Incident trends, threat analysis, response metrics
+    - **Operational Analytics**: Resource utilization, efficiency metrics
+    - **Access Analytics**: Entry/exit patterns, occupancy, flow analysis
+    - **Video Analytics**: Motion patterns, object detection statistics
+    - **Compliance Analytics**: Policy adherence, audit reports
+    
+    ## Data Processing
+    
+    - Real-time stream processing for live metrics
+    - Batch processing for historical analysis
+    - Machine learning for predictive insights
+    - Data aggregation across multiple sources
+  version: 1.0.0
+  contact:
+    name: SPARC Analytics Team
+    email: analytics@sparc.security
+    url: https://sparc.security/support
+
+servers:
+  - url: https://api.sparc.security/v1/analytics
+    description: Production
+  - url: https://staging-api.sparc.security/v1/analytics
+    description: Staging
+  - url: http://localhost:3005
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Dashboards
+    description: Real-time operational dashboards
+  - name: Reports
+    description: Historical reports and exports
+  - name: Metrics
+    description: Real-time metrics and KPIs
+  - name: Insights
+    description: AI-powered insights and predictions
+  - name: Visualizations
+    description: Data visualization endpoints
+  - name: Custom Analytics
+    description: Custom analytics queries
+  - name: Health
+    description: Service health checks
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Get service health
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /dashboards:
+    get:
+      tags:
+        - Dashboards
+      summary: List available dashboards
+      description: Returns all dashboards accessible to the user
+      operationId: listDashboards
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: category
+          schema:
+            type: string
+            enum: [security, operations, access, video, compliance, custom]
+          description: Filter by category
+      responses:
+        '200':
+          description: List of dashboards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dashboards:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Dashboard'
+
+    post:
+      tags:
+        - Dashboards
+      summary: Create custom dashboard
+      description: Creates a new custom dashboard
+      operationId: createDashboard
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDashboardRequest'
+      responses:
+        '201':
+          description: Dashboard created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+
+  /dashboards/{dashboardId}:
+    get:
+      tags:
+        - Dashboards
+      summary: Get dashboard data
+      description: Returns real-time data for a specific dashboard
+      operationId: getDashboard
+      parameters:
+        - $ref: '#/components/parameters/DashboardId'
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: siteId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by site
+        - in: query
+          name: refresh
+          schema:
+            type: boolean
+            default: false
+          description: Force data refresh
+      responses:
+        '200':
+          description: Dashboard data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardData'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /metrics/realtime:
+    get:
+      tags:
+        - Metrics
+      summary: Get real-time metrics
+      description: Returns current real-time metrics
+      operationId: getRealtimeMetrics
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: metrics
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [
+                active_incidents,
+                online_cameras,
+                active_users,
+                door_status,
+                alarm_count,
+                occupancy,
+                response_time,
+                throughput
+              ]
+          style: form
+          explode: false
+          description: Metrics to retrieve
+        - in: query
+          name: siteId
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Real-time metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
+
+  /metrics/historical:
+    get:
+      tags:
+        - Metrics
+      summary: Get historical metrics
+      description: Returns historical metric data for trend analysis
+      operationId: getHistoricalMetrics
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: metric
+          required: true
+          schema:
+            type: string
+          description: Metric name
+        - in: query
+          name: startTime
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: endTime
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: granularity
+          schema:
+            type: string
+            enum: [minute, hour, day, week, month]
+            default: hour
+        - in: query
+          name: aggregation
+          schema:
+            type: string
+            enum: [avg, sum, min, max, count]
+            default: avg
+        - in: query
+          name: siteId
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Historical metric data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoricalMetricsResponse'
+
+  /reports/templates:
+    get:
+      tags:
+        - Reports
+      summary: List report templates
+      description: Returns available report templates
+      operationId: listReportTemplates
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: category
+          schema:
+            type: string
+            enum: [security, compliance, operations, executive]
+      responses:
+        '200':
+          description: List of report templates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  templates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReportTemplate'
+
+  /reports/generate:
+    post:
+      tags:
+        - Reports
+      summary: Generate report
+      description: Generates a report based on template and parameters
+      operationId: generateReport
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateReportRequest'
+      responses:
+        '202':
+          description: Report generation started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportJob'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+
+  /reports/{reportId}:
+    get:
+      tags:
+        - Reports
+      summary: Get report status
+      description: Returns the status of a report generation job
+      operationId: getReport
+      parameters:
+        - in: path
+          name: reportId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Report status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportJob'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /reports/{reportId}/download:
+    get:
+      tags:
+        - Reports
+      summary: Download report
+      description: Downloads the generated report
+      operationId: downloadReport
+      parameters:
+        - in: path
+          name: reportId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: format
+          schema:
+            type: string
+            enum: [pdf, excel, csv]
+            default: pdf
+      responses:
+        '200':
+          description: Report file
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            text/csv:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /insights/anomalies:
+    get:
+      tags:
+        - Insights
+      summary: Get anomaly detections
+      description: Returns detected anomalies and unusual patterns
+      operationId: getAnomalies
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: startTime
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: endTime
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: category
+          schema:
+            type: string
+            enum: [access, security, operational, all]
+            default: all
+        - in: query
+          name: severity
+          schema:
+            type: string
+            enum: [low, medium, high, critical]
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageNumber'
+      responses:
+        '200':
+          description: List of anomalies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  anomalies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Anomaly'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /insights/predictions:
+    get:
+      tags:
+        - Insights
+      summary: Get predictive insights
+      description: Returns AI-powered predictions and forecasts
+      operationId: getPredictions
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: type
+          required: true
+          schema:
+            type: string
+            enum: [incident_forecast, occupancy_prediction, maintenance_schedule, threat_assessment]
+        - in: query
+          name: horizon
+          schema:
+            type: string
+            enum: [1h, 24h, 7d, 30d]
+            default: 24h
+          description: Prediction time horizon
+        - in: query
+          name: siteId
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Predictive insights
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResponse'
+
+  /visualizations/heatmap:
+    get:
+      tags:
+        - Visualizations
+      summary: Get heatmap data
+      description: Returns data for generating heatmap visualizations
+      operationId: getHeatmap
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: type
+          required: true
+          schema:
+            type: string
+            enum: [motion, occupancy, incidents, access]
+        - in: query
+          name: siteId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: floor
+          schema:
+            type: integer
+        - in: query
+          name: startTime
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: endTime
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: resolution
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+          description: Grid resolution
+      responses:
+        '200':
+          description: Heatmap data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeatmapData'
+
+  /custom/query:
+    post:
+      tags:
+        - Custom Analytics
+      summary: Execute custom analytics query
+      description: |
+        Executes a custom analytics query using the analytics DSL.
+        Requires advanced permissions.
+      operationId: executeCustomQuery
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomQueryRequest'
+      responses:
+        '200':
+          description: Query results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomQueryResponse'
+        '400':
+          description: Invalid query
+        '403':
+          description: Insufficient permissions
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TenantId:
+      in: header
+      name: X-Tenant-ID
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    DashboardId:
+      in: path
+      name: dashboardId
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    PageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    PageNumber:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        analytics_engine:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        data_pipeline:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+
+    Dashboard:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+          enum: [security, operations, access, video, compliance, custom]
+        widgets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Widget'
+        layout:
+          type: object
+          properties:
+            columns:
+              type: integer
+            rows:
+              type: integer
+        refreshInterval:
+          type: integer
+          description: Auto-refresh interval in seconds
+        isDefault:
+          type: boolean
+        createdBy:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    Widget:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [metric, chart, table, map, gauge, timeline]
+        title:
+          type: string
+        dataSource:
+          type: string
+        config:
+          type: object
+          description: Widget-specific configuration
+        position:
+          type: object
+          properties:
+            x:
+              type: integer
+            y:
+              type: integer
+            width:
+              type: integer
+            height:
+              type: integer
+
+    CreateDashboardRequest:
+      type: object
+      required:
+        - name
+        - widgets
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+          enum: [custom]
+        widgets:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              title:
+                type: string
+              dataSource:
+                type: string
+              config:
+                type: object
+        layout:
+          type: object
+          properties:
+            columns:
+              type: integer
+              default: 12
+            rows:
+              type: integer
+              default: 8
+        refreshInterval:
+          type: integer
+          default: 60
+
+    DashboardData:
+      type: object
+      properties:
+        dashboard:
+          $ref: '#/components/schemas/Dashboard'
+        data:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              value:
+                oneOf:
+                  - type: number
+                  - type: string
+                  - type: array
+                  - type: object
+              timestamp:
+                type: string
+                format: date-time
+              metadata:
+                type: object
+        lastUpdated:
+          type: string
+          format: date-time
+
+    MetricsResponse:
+      type: object
+      properties:
+        metrics:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              value:
+                type: number
+              unit:
+                type: string
+              trend:
+                type: string
+                enum: [up, down, stable]
+              change:
+                type: number
+                description: Percentage change from previous period
+              status:
+                type: string
+                enum: [normal, warning, critical]
+        timestamp:
+          type: string
+          format: date-time
+
+    HistoricalMetricsResponse:
+      type: object
+      properties:
+        metric:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        granularity:
+          type: string
+        aggregation:
+          type: string
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              value:
+                type: number
+              count:
+                type: integer
+                description: Number of data points in this bucket
+
+    ReportTemplate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+          enum: [security, compliance, operations, executive]
+        parameters:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              type:
+                type: string
+                enum: [date, datetime, string, number, boolean, select]
+              required:
+                type: boolean
+              options:
+                type: array
+                items:
+                  type: string
+        schedule:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            frequency:
+              type: string
+              enum: [daily, weekly, monthly]
+            recipients:
+              type: array
+              items:
+                type: string
+                format: email
+
+    GenerateReportRequest:
+      type: object
+      required:
+        - templateId
+        - parameters
+      properties:
+        templateId:
+          type: string
+          format: uuid
+        parameters:
+          type: object
+          additionalProperties: true
+        format:
+          type: string
+          enum: [pdf, excel, csv]
+          default: pdf
+        schedule:
+          type: boolean
+          default: false
+          description: Schedule for recurring generation
+
+    ReportJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        templateId:
+          type: string
+          format: uuid
+        templateName:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        format:
+          type: string
+        fileSize:
+          type: integer
+          description: Size in bytes (when completed)
+        downloadUrl:
+          type: string
+          description: Download URL (when completed)
+        error:
+          type: string
+          description: Error message (if failed)
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    Anomaly:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [unusual_access, abnormal_activity, system_anomaly, behavioral_change]
+        category:
+          type: string
+          enum: [access, security, operational]
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        description:
+          type: string
+        detectedAt:
+          type: string
+          format: date-time
+        location:
+          type: object
+          properties:
+            siteId:
+              type: string
+              format: uuid
+            zoneId:
+              type: string
+              format: uuid
+            details:
+              type: string
+        relatedEntities:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [user, camera, door, incident]
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+        recommendation:
+          type: string
+
+    PredictionResponse:
+      type: object
+      properties:
+        type:
+          type: string
+        horizon:
+          type: string
+        predictions:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              value:
+                type: number
+              confidence:
+                type: number
+                minimum: 0
+                maximum: 1
+              upperBound:
+                type: number
+              lowerBound:
+                type: number
+        insights:
+          type: array
+          items:
+            type: string
+            description: AI-generated insights
+        accuracy:
+          type: number
+          description: Historical accuracy of this prediction type
+
+    HeatmapData:
+      type: object
+      properties:
+        type:
+          type: string
+        bounds:
+          type: object
+          properties:
+            north:
+              type: number
+            south:
+              type: number
+            east:
+              type: number
+            west:
+              type: number
+        resolution:
+          type: integer
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              x:
+                type: integer
+              y:
+                type: integer
+              value:
+                type: number
+              metadata:
+                type: object
+        legend:
+          type: object
+          properties:
+            min:
+              type: number
+            max:
+              type: number
+            unit:
+              type: string
+            colors:
+              type: array
+              items:
+                type: object
+                properties:
+                  threshold:
+                    type: number
+                  color:
+                    type: string
+
+    CustomQueryRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: object
+          description: Analytics DSL query
+          properties:
+            select:
+              type: array
+              items:
+                type: string
+            from:
+              type: string
+            where:
+              type: object
+            groupBy:
+              type: array
+              items:
+                type: string
+            orderBy:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  direction:
+                    type: string
+                    enum: [asc, desc]
+            limit:
+              type: integer
+              maximum: 1000
+        timeRange:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+
+    CustomQueryResponse:
+      type: object
+      properties:
+        query:
+          type: object
+        results:
+          type: array
+          items:
+            type: object
+        metadata:
+          type: object
+          properties:
+            rowCount:
+              type: integer
+            executionTime:
+              type: integer
+              description: Query execution time in milliseconds
+            dataSources:
+              type: array
+              items:
+                type: string
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalItems:
+          type: integer
+        totalPages:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+
+  responses:
+    BadRequestError:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    UnauthorizedError:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFoundError:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

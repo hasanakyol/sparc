@@ -1,0 +1,206 @@
+groups:
+  - name: error_monitoring
+    interval: 30s
+    rules:
+      # High error rate alert
+      - alert: HighErrorRate
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[5m])) by (service) 
+          / sum(rate(http_requests_total[5m])) by (service)) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "High error rate detected in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has error rate of {{ $value | humanizePercentage }} (threshold: 5%)"
+          runbook_url: "https://wiki.sparc.com/runbooks/high-error-rate"
+
+      # Sudden error spike
+      - alert: ErrorSpike
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[5m])) by (service) 
+          / sum(rate(http_requests_total{status=~"5.."}[1h])) by (service)) > 3
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Sudden error spike in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} is experiencing 3x more errors than the hourly average"
+
+      # Unhandled exceptions
+      - alert: UnhandledExceptions
+        expr: |
+          rate(unhandled_exceptions_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          team: development
+        annotations:
+          summary: "Unhandled exceptions in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} is throwing {{ $value | humanize }} unhandled exceptions per second"
+
+      # Circuit breaker open
+      - alert: CircuitBreakerOpen
+        expr: |
+          circuit_breaker_state{state="open"} == 1
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Circuit breaker open for {{ $labels.service }}"
+          description: "Circuit breaker for {{ $labels.service }} -> {{ $labels.dependency }} is open"
+
+      # Database connection errors
+      - alert: DatabaseConnectionErrors
+        expr: |
+          rate(database_connection_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Database connection errors in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} is experiencing {{ $value | humanize }} database connection errors per second"
+
+      # Redis connection errors
+      - alert: RedisConnectionErrors
+        expr: |
+          rate(redis_connection_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Redis connection errors in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} is experiencing {{ $value | humanize }} Redis connection errors per second"
+
+      # High retry rate
+      - alert: HighRetryRate
+        expr: |
+          (sum(rate(retry_attempts_total{result="failed"}[5m])) by (service)
+          / sum(rate(retry_attempts_total[5m])) by (service)) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High retry failure rate in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has {{ $value | humanizePercentage }} retry failure rate"
+
+      # Memory leak detection
+      - alert: PotentialMemoryLeak
+        expr: |
+          (process_resident_memory_bytes / process_virtual_memory_bytes) > 0.8
+          and rate(process_resident_memory_bytes[30m]) > 0
+        for: 30m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Potential memory leak in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} memory usage is continuously growing"
+
+      # Request timeout
+      - alert: HighRequestTimeout
+        expr: |
+          (sum(rate(http_request_duration_seconds_bucket{le="30"}[5m])) by (service)
+          / sum(rate(http_request_duration_seconds_count[5m])) by (service)) < 0.95
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High request timeout rate in {{ $labels.service }}"
+          description: "More than 5% of requests to {{ $labels.service }} are taking longer than 30 seconds"
+
+      # Authentication failures
+      - alert: HighAuthenticationFailureRate
+        expr: |
+          rate(authentication_failures_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "High authentication failure rate"
+          description: "Authentication failures are occurring at {{ $value | humanize }} per second"
+
+  - name: error_aggregation
+    interval: 1m
+    rules:
+      # Error budget burn rate
+      - alert: ErrorBudgetBurnRateHigh
+        expr: |
+          (1 - (sum(rate(http_requests_total{status!~"5.."}[1h])) by (service)
+          / sum(rate(http_requests_total[1h])) by (service))) > 0.001
+        for: 15m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Error budget burn rate high for {{ $labels.service }}"
+          description: "Service {{ $labels.service }} is burning through error budget at {{ $value | humanizePercentage }} per hour"
+
+      # Multiple services failing
+      - alert: MultipleServiceFailures
+        expr: |
+          count(
+            (sum(rate(http_requests_total{status=~"5.."}[5m])) by (service) 
+            / sum(rate(http_requests_total[5m])) by (service)) > 0.1
+          ) > 3
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+          page: true
+        annotations:
+          summary: "Multiple services experiencing failures"
+          description: "{{ $value }} services are experiencing error rates above 10%"
+
+      # Cascading failures
+      - alert: CascadingFailures
+        expr: |
+          count(circuit_breaker_state{state="open"} == 1) > 2
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          page: true
+        annotations:
+          summary: "Cascading failures detected"
+          description: "{{ $value }} circuit breakers are open, indicating cascading failures"
+
+  - name: error_slos
+    interval: 1m
+    rules:
+      # SLO violation - availability
+      - alert: SLOViolationAvailability
+        expr: |
+          (sum(rate(http_requests_total{status!~"5.."}[5m])) by (service)
+          / sum(rate(http_requests_total[5m])) by (service)) < 0.99
+        for: 15m
+        labels:
+          severity: warning
+          team: sre
+          slo: availability
+        annotations:
+          summary: "SLO violation: Availability below 99% for {{ $labels.service }}"
+          description: "Service {{ $labels.service }} availability is {{ $value | humanizePercentage }}"
+
+      # SLO violation - latency
+      - alert: SLOViolationLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (service, le)
+          ) > 1
+        for: 15m
+        labels:
+          severity: warning
+          team: sre
+          slo: latency
+        annotations:
+          summary: "SLO violation: P95 latency above 1s for {{ $labels.service }}"
+          description: "Service {{ $labels.service }} P95 latency is {{ $value | humanizeDuration }}"
